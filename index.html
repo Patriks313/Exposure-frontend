@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exposure Roll-up — True company exposure</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #1c1a17; --paper: #f4f1ea; --card: #fffdf8; --line: #d8d2c4;
+    --accent: #b5481b; --share: #3f6f57; --fund: #2f5d86; --cash: #8a6d1f;
+    --undisc: #c9a227; --mute: #7a7468;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink);
+    background: var(--paper); margin: 0; line-height: 1.5;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 28px 48px; }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  .serif { font-family: 'Fraunces', Georgia, serif; }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px;
+  }
+  h1 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 30px; line-height: 1.15; margin: 0 0 6px; }
+  .lede { color: var(--mute); font-size: 14px; margin-bottom: 26px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin-bottom: 18px; }
+  .panel h2 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 18px; margin: 0 0 4px; }
+  .hint { color: var(--mute); font-size: 13px; margin-bottom: 14px; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; }
+  .stat { flex: 1; min-width: 130px; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: #fff; }
+  .statK { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); }
+  .statV { font-family: 'Fraunces', Georgia, serif; font-size: 24px; }
+  .pill {
+    font-family: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 20px;
+    cursor: pointer; margin-right: 7px; border: 1px solid var(--line); background: transparent; color: var(--ink);
+  }
+  .pill.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .pill.active.accent { background: var(--accent); border-color: var(--accent); }
+  .tableBox { max-height: 460px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { position: sticky; top: 0; background: var(--card); }
+  th {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--mute); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  th.num { text-align: right; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable.active { color: var(--ink); }
+  td { font-size: 13px; padding: 6px 8px; border-bottom: 1px solid #ece8dd; }
+  td.num { font-family: 'IBM Plex Mono', ui-monospace, monospace; text-align: right; }
+  td.isin { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; color: var(--mute); }
+  tr.overlap { background: #fbf3ec; }
+  .tag {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 9.5px; color: var(--accent); margin-left: 7px;
+    border: 1px solid var(--accent); border-radius: 4px; padding: 1px 5px; letter-spacing: 0.05em; vertical-align: middle;
+  }
+  .bar { height: 12px; background: #ece8dd; border-radius: 3px; overflow: hidden; display: flex; }
+  .bar span { display: block; height: 100%; }
+  tfoot td { border-top: 2px solid var(--ink); border-bottom: none; }
+  .foot { font-size: 12px; color: var(--mute); margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
+  .notice { font-size: 13px; color: var(--mute); }
+  .panel.loading { background: #f0ede3; }
+  .panel.error { background: #fbe9e2; border-color: var(--accent); }
+  .panel.error .notice { color: #7c2f10; }
+  .panel.overlapcall { background: #fbf3ec; border-color: var(--accent); }
+  .panel.overlapcall h2 { color: #7c2f10; }
+  .panel.overlapcall .notice { color: #7c2f10; }
+  .sortmark { font-family: 'IBM Plex Mono', ui-monospace, monospace; margin-left: 4px; font-size: 9px; color: var(--line); }
+  .sortmark.active { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Module 4.4 — Exposure roll-up</div>
+  <h1>True company exposure</h1>
+  <div class="lede">
+    Funds are replaced by their underlying holdings; shares and cash pass through.
+    Everything is then summed by ISIN — so a company held directly <em>and</em> inside a
+    fund shows as one true number.
+  </div>
+
+  <div id="status"></div>
+  <div id="content"></div>
+</div>
+
+<script>
+// ============================================================
+// Exposure roll-up — real web page (GitHub Pages frontend)
+// Portfolio is baked in for now. Fund holdings are fetched LIVE
+// from the backend database. Merge math ported from the prototype.
+// ============================================================
+
+var BACKEND = "https://exposure-backend.onrender.com";
+var FUND_ISIN = "IE00BHZPJ890";
+
+// --- SOURCE: Data input table (real weights, fraction of portfolio) ---
+var PORTFOLIO = [
+  ["ABB Ltd","CH0012221716",0.00795850],["Abbvie","US00287Y1091",0.00241232],
+  ["Addtech B","SE0014781795",0.00376473],["Advanced Micro Devices","US0079031078",0.00298770],
+  ["Aker Solutions","NO0010716582",0.00482539],["Alfa Laval","SE0000695876",0.00292782],
+  ["Alibaba Group Holding Ltd","US01609W1027",0.00159234],["ALK-Abelló B","DK0061802139",0.00413273],
+  ["Alphabet Inc- Class A","US02079K3059",0.00754625],["Amazon.com","US0231351067",0.00609869],
+  ["Ambu","DK0060946788",0.00219815],["Ameresco","US02361E1082",0.00257173],
+  ["Amphenol Corp","US0320951017",0.00175823],["Amundi MSCI Europe ESG Leaders UCITS ETF","LU1940199711",0.02807822],
+  ["AQ Group","SE0022062196",0.00356490],["Arcadis","NL0006237562",0.00270748],
+  ["Array Technologies","US04271T1007",0.00212255],["ASML Holding","NL0010273215",0.00177487],
+  ["Atlas Copco B","SE0017486897",0.01089804],["ATS Corporation","CA00217Y1043",0.00226382],
+  ["Axon Enterprise","US05464C1018",0.00123340],["Bank of America Corp","US0605051046",0.00124139],
+  ["Beijer Ref B","SE0015949748",0.00366062],["Bonesupport Holding","SE0009858152",0.00469819],
+  ["BROOKFIELD RENEWABLE CORP","CA11285B1085",0.00207881],["Bureau Veritas","FR0006174348",0.00181393],
+  ["BYD Company","CNE100000296",0.00214912],["Carlsberg B","DK0010181759",0.00188797],
+  ["CATL","CNE100006WS8",0.00205269],["Celsius Holdings","US15118V2079",0.00203715],
+  ["Charles Schwab Corp (The)","US8085131055",0.00259253],["CIF SVENSKA AKTIER IA0","LU2122479103",0.20094526],
+  ["Core & Main Inc","US21874C1027",0.00206426],["CWMFS UTLÄNDSKA AKTIER IA0","LU1695631959",0.14659235],
+  ["Danske Bank","DK0010274414",0.00967970],["Deckers Outdoor Corp","US2435371073",0.00318123],
+  ["DNB Bank ASA","NO0010161896",0.00541495],["DSV","DK0060079531",0.00440710],
+  ["EDP","PTEDP0AM0009",0.00186439],["Epam Systems","US29414B1044",0.00158595],
+  ["Eqt","SE0012853455",0.00590828],["Ericsson B","SE0000108656",0.00437549],
+  ["Expedia Group","US30212P3038",0.00114244],["Galderma Group","CH1335392721",0.00194035],
+  ["Hannon Armstrong Capital","US41068X1000",0.00315755],["Hexagon B","SE0015961909",0.00385199],
+  ["Hitachi,Ltd","JP3788600009",0.00231008],["HMS Networks","SE0009997018",0.00487833],
+  ["Indutrade","SE0001515552",0.00141453],["Infineon AG","DE0006231004",0.00645551],
+  ["Inpost S.A.","LU2290522684",0.00223526],["Invesco S&P 500 ESG UCITS ETF Acc USD","IE00BKS7L097",0.06441414],
+  ["Invisio","SE0001200015",0.00305508],["ISHARES MSCI JAPAN ESG SCREENED UCITS","IE00BFNM3L97",0.00918246],
+  ["iShares MSCI USA ESG Enhanced UCITS ETF","IE00BHZPJ890",0.05556582],["Kinaxis Inc","CA49448Q1090",0.00186087],
+  ["Kongsberg Gruppen","NO0013536151",0.00374162],["L&G Europe ESG Exclusions Paris Aligned UCITS ETF","IE00BKLTRN76",0.02572967],
+  ["L&G Japan Equity UCITS ETF USD","IE00BFXR5T61",0.01891705],["L&G US ESG Exclusions Paris Aligned UCITS ETF","IE00BKLWY790",0.05971129],
+  ["Lagercrantz Group B","SE0014990966",0.00678907],["Lifco B","SE0015949201",0.00408668],
+  ["Lundin Mining Corp","CA5503721063",0.00391313],["Marvell Technology","US5738741041",0.00240480],
+  ["MICROSOFT CORPORATION","US5949181045",0.01092267],["Mirion Technologies","US60471A1016",0.00168085],
+  ["Munters Group","SE0009806607",0.00333013],["Mycronic","SE0025158629",0.00428236],
+  ["NEXANS","FR0000044448",0.00370024],["Nextera Energy Partners LP","US65341B1061",0.00166167],
+  ["NKT","DK0010287663",0.00579392],["Nokia Oyj","FI0009000681",0.01108104],
+  ["Nordea Bank Abp","FI4000297767",0.00619047],["Novo Nordisk B","DK0062498333",0.01969484],
+  ["NVIDIA CORP","US67066G1040",0.00619246],["Octave Intelligence","SE0028329433",0.00000000],
+  ["Ormat Technologies Inc","US6866881021",0.00135042],["Parsons","US70202L1026",0.00348963],
+  ["Per Aarsleff Holding B","DK0060700516",0.00316037],["PRUDENTIAL PLC ORD 5P","GB0007099541",0.00148983],
+  ["Pure Storage","US74624M1027",0.00264701],["QUALCOMM INC","US7475251036",0.00266350],
+  ["Ringkjøbing Landbobank","DK0060854669",0.00681168],["SAAB B","SE0021921269",0.00489765],
+  ["Sampo Oyj A","FI4000552500",0.00423622],["Samsung Electronics","US7960508882",0.00254774],
+  ["SAP AG","DE0007164600",0.00152287],["SERVICENOW INC","US81762P1021",0.00190365],
+  ["Shoals Technologies Group","US82489W1071",0.00299315],["SIEGFRIED N","CH1429326825",0.00169034],
+  ["SIEMENS AG","DE0007236101",0.00222085],["SNOWFLAKE CL A","US8334451098",0.00256777],
+  ["SPDR S&P 500 ESG Leaders UCITS ETF","IE00BH4GPZ28",0.01928569],["SSAB A","SE0000171100",0.00141788],
+  ["STANTEC INC","CA85472N1096",0.00175401],["Sumitomo Metal Mining Co","JP3402600005",0.00129467],
+  ["Synopsys Inc","US8716071076",0.00335344],["TAIWAN SEMICONDUCTOR MANUFACT ADR","US8740391003",0.00452401],
+  ["THERMO FISHER SCIENTIFIC ORD","US8835561023",0.00358101],["TransUnion","US89400J1079",0.00150521],
+  ["UnitedHealth Group Inc","US91324P1021",0.00413763],["Vestas Wind Systems","DK0061539921",0.00606753],
+  ["VISA","US92826C8394",0.00245205],["Wärtsilä Oyj Abp","FI0009003727",0.00639306],
+  ["Xtrackers MSCI Canada ESG Screened UCITS ETF","LU0476289540",0.01429296],["Xylem Inc","US98419M1009",0.00193810],
+  ["SEK","",0.00687246]
+];
+
+// --- Type detection (same logic as ISIN Classification) ---
+var FUND_KW = ["ETF", "UCITS", "AKTIER IA"];
+function isCash(name, isin) {
+  return !isin || name.trim().toUpperCase() === "SEK" || name.toLowerCase() === "cash";
+}
+function isFund(name) {
+  return FUND_KW.some(function (k) { return name.toUpperCase().includes(k); });
+}
+
+// --- State ---
+var state = {
+  fundSplit: null,   // null = still loading
+  loadErr: "",
+  view: "all",       // all | overlap
+  sort: { col: "total", dir: "desc" }
+};
+
+// --- THE MERGE: build exposure by ISIN ---
+function buildExposure(fundSplit) {
+  var FUND_SPLIT = fundSplit || [];
+  var map = new Map();
+
+  function key(isin) { return (isin && isin.trim()) ? isin.trim() : "TMP-cash"; }
+  function touch(isin, name) {
+    var k = key(isin);
+    if (!map.has(k)) map.set(k, { isin: k, name: name, direct: 0, viaFund: 0 });
+    return map.get(k);
+  }
+
+  // 1. Direct holdings: shares + cash pass straight through.
+  //    Funds are replaced below; a fund not yet split goes to its own bucket.
+  var notSplitPortW = 0, nNotSplit = 0;
+  PORTFOLIO.forEach(function (row) {
+    var name = row[0], isin = row[1], w = row[2];
+    if (isFund(name) && !isCash(name, isin)) {
+      if (isin.trim() !== FUND_ISIN) { notSplitPortW += w * 100; nNotSplit += 1; }
+      return; // fund lines never pass through as themselves
+    }
+    touch(isin, name).direct += w * 100;
+  });
+
+  // 2. Fund split: replace the iShares fund with its holdings.
+  var fundLine = PORTFOLIO.find(function (r) { return r[1] === FUND_ISIN; });
+  var fundWeight = fundLine ? fundLine[2] * 100 : 0;
+  var disclosed = 0;
+  FUND_SPLIT.forEach(function (h) {
+    var isin = h[0], name = h[1], wInFund = h[2];
+    disclosed += wInFund;
+    touch(isin, name).viaFund += (wInFund / 100) * fundWeight;
+  });
+  var undiscInFund = 100 - disclosed;
+  var undiscPortW = (undiscInFund / 100) * fundWeight;
+
+  // 3. Finalise rows
+  var list = Array.from(map.values()).map(function (e) {
+    return {
+      isin: e.isin, name: e.name, direct: e.direct, viaFund: e.viaFund,
+      total: e.direct + e.viaFund, overlap: e.direct > 0 && e.viaFund > 0
+    };
+  });
+
+  list.push({ isin: "—", name: "Undisclosed (inside iShares fund)",
+    direct: 0, viaFund: undiscPortW, total: undiscPortW, overlap: false, isUndisc: true });
+  list.push({ isin: "—", name: "Funds not yet split (" + nNotSplit + " funds)",
+    direct: 0, viaFund: notSplitPortW, total: notSplitPortW, overlap: false, isNotSplit: true });
+
+  var totals = {
+    direct: list.reduce(function (s, r) { return s + r.direct; }, 0),
+    viaFund: list.reduce(function (s, r) { return s + r.viaFund; }, 0),
+    total: list.reduce(function (s, r) { return s + r.total; }, 0),
+    nOverlap: list.filter(function (r) { return r.overlap; }).length,
+    nLines: list.length,
+    notSplit: notSplitPortW, nNotSplit: nNotSplit, fundWeight: fundWeight
+  };
+  return { rows: list, totals: totals };
+}
+
+// --- Sorting + filtering for display ---
+function sortedRows(rows) {
+  var filtered = state.view === "overlap" ? rows.filter(function (r) { return r.overlap; }) : rows;
+  var main = filtered.filter(function (r) { return !r.isUndisc && !r.isNotSplit; });
+  var tail = filtered.filter(function (r) { return r.isUndisc || r.isNotSplit; })
+    .sort(function (a, b) { return (a.isUndisc ? 1 : 0) - (b.isUndisc ? 1 : 0); });
+  var col = state.sort.col, dir = state.sort.dir;
+  main.sort(function (a, b) {
+    var cmp;
+    if (col === "name" || col === "isin") cmp = String(a[col]).localeCompare(String(b[col]));
+    else cmp = a[col] - b[col];
+    return dir === "asc" ? cmp : -cmp;
+  });
+  return main.concat(tail);
+}
+
+// --- Render ---
+function pct(n) { return n.toFixed(3) + "%"; }
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+function renderStatus() {
+  var el = document.getElementById("status");
+  if (state.fundSplit === null && !state.loadErr) {
+    el.innerHTML =
+      '<div class="panel loading"><div class="notice">' +
+      'Loading fund holdings from the database… the free backend can take up to ~50 seconds ' +
+      'to wake on the first request. Please wait.</div></div>';
+  } else if (state.loadErr) {
+    el.innerHTML =
+      '<div class="panel error"><div class="notice"><strong>Couldn\'t load fund holdings.</strong> ' +
+      esc(state.loadErr) + '</div></div>';
+  } else {
+    el.innerHTML = "";
+  }
+}
+
+function sortTh(label, col, numeric) {
+  var active = state.sort.col === col;
+  var arrow = active ? (state.sort.dir === "asc" ? "▲" : "▼") : "▼";
+  return '<th class="sortable' + (numeric ? " num" : "") + (active ? " active" : "") +
+    '" data-col="' + col + '">' + label +
+    '<span class="sortmark' + (active ? " active" : "") + '">' + arrow + '</span></th>';
+}
+
+function render() {
+  renderStatus();
+  var built = buildExposure(state.fundSplit);
+  var rows = built.rows, totals = built.totals;
+  var maxTotal = Math.max.apply(null, rows.map(function (r) { return r.total; }));
+  var shown = sortedRows(rows);
+
+  var rowsHtml = shown.map(function (r) {
+    var viaColor = r.isUndisc ? "var(--undisc)" : (r.isNotSplit ? "var(--mute)" : "var(--fund)");
+    return '<tr class="' + (r.overlap ? "overlap" : "") + '">' +
+      '<td>' + esc(r.name) + (r.overlap ? '<span class="tag">OVERLAP</span>' : "") + '</td>' +
+      '<td class="isin">' + esc(r.isin) + '</td>' +
+      '<td class="num" style="color:' + (r.direct ? "var(--share)" : "var(--line)") + '">' +
+        (r.direct ? pct(r.direct) : "—") + '</td>' +
+      '<td class="num" style="color:' + (r.viaFund ? viaColor : "var(--line)") + '">' +
+        (r.viaFund ? pct(r.viaFund) : "—") + '</td>' +
+      '<td class="num" style="font-weight:600">' + pct(r.total) + '</td>' +
+      '<td><div class="bar">' +
+        '<span style="width:' + (r.direct / maxTotal) * 100 + '%;background:var(--share)"></span>' +
+        '<span style="width:' + (r.viaFund / maxTotal) * 100 + '%;background:' + viaColor + '"></span>' +
+      '</div></td></tr>';
+  }).join("");
+
+  var html =
+    // Summary
+    '<div class="panel"><h2>What the merge did</h2>' +
+    '<div class="hint">One fund split so far: the iShares MSCI USA ESG Enhanced fund (' +
+      totals.fundWeight.toFixed(2) + '% of the portfolio) broken into its underlying holdings, ' +
+      'read live from the database. The other ' + totals.nNotSplit + ' funds aren\'t split yet — ' +
+      'they sit in their own honest bucket at the bottom of the table, so the total still ties to 100%.</div>' +
+    '<div class="stats">' +
+      '<div class="stat"><div class="statK">Exposure lines</div><div class="statV">' + totals.nLines + '</div></div>' +
+      '<div class="stat"><div class="statK">Overlaps found</div><div class="statV" style="color:var(--accent)">' + totals.nOverlap + '</div></div>' +
+      '<div class="stat"><div class="statK">Seen through</div><div class="statV" style="color:var(--share)">' + (totals.total - totals.notSplit).toFixed(1) + '%</div></div>' +
+      '<div class="stat"><div class="statK">Funds not yet split</div><div class="statV" style="color:var(--mute)">' + totals.notSplit.toFixed(1) + '%</div></div>' +
+    '</div></div>' +
+
+    // Overlap callout
+    '<div class="panel overlapcall"><h2>The hidden overlap</h2>' +
+    '<div class="notice">' + totals.nOverlap + ' compan' + (totals.nOverlap === 1 ? "y is" : "ies are") +
+      ' held both directly and inside the iShares fund. Looking at either holding alone understates the ' +
+      'real exposure — the roll-up adds them together.</div></div>' +
+
+    // Table
+    '<div class="panel"><h2>Exposure by company</h2>' +
+    '<div class="hint"><strong>Direct</strong> = held as a share. <strong>Via fund</strong> = look-through ' +
+      'from inside the iShares fund. <strong>Total</strong> = true exposure.</div>' +
+    '<div style="margin-bottom:12px">' +
+      '<button class="pill' + (state.view === "all" ? " active" : "") + '" data-view="all">All ' +
+        rows.length + '</button>' +
+      '<button class="pill accent' + (state.view === "overlap" ? " active" : "") + '" data-view="overlap">Overlaps only ' +
+        totals.nOverlap + '</button>' +
+    '</div>' +
+    '<div class="tableBox"><table><thead><tr>' +
+      sortTh("Company", "name", false) +
+      sortTh("ISIN", "isin", false) +
+      sortTh("Direct", "direct", true) +
+      sortTh("Via fund", "viaFund", true) +
+      sortTh("Total", "total", true) +
+      '<th style="width:140px">Share of portfolio</th>' +
+    '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
+    '<tfoot><tr>' +
+      '<td class="serif" style="font-size:14px">Total — ties to 100%</td><td></td>' +
+      '<td class="num">' + totals.direct.toFixed(2) + '%</td>' +
+      '<td class="num">' + totals.viaFund.toFixed(2) + '%</td>' +
+      '<td class="num" style="font-weight:700">' + totals.total.toFixed(2) + '%</td><td></td>' +
+    '</tr></tfoot></table></div>' +
+    '<div class="foot">Two honest buckets sit at the bottom, kept separate on purpose. ' +
+      '<strong>Undisclosed</strong> — the part of the iShares fund whose holdings weren\'t listed ' +
+      '(fund opened, but not fully). <strong>Funds not yet split</strong> — funds we haven\'t looked ' +
+      'inside at all yet. Splitting each is the same operation repeated; as more funds are split, this ' +
+      'bucket shrinks.</div></div>';
+
+  document.getElementById("content").innerHTML = html;
+  wireEvents();
+}
+
+function wireEvents() {
+  document.querySelectorAll(".pill[data-view]").forEach(function (b) {
+    b.addEventListener("click", function () { state.view = b.getAttribute("data-view"); render(); });
+  });
+  document.querySelectorAll("th.sortable").forEach(function (h) {
+    h.addEventListener("click", function () {
+      var col = h.getAttribute("data-col");
+      if (state.sort.col === col) {
+        state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+      } else {
+        state.sort.col = col;
+        state.sort.dir = (col === "name" || col === "isin") ? "asc" : "desc";
+      }
+      render();
+    });
+  });
+}
+
+// --- Load fund holdings live from the backend, then render ---
+function loadFund() {
+  fetch(BACKEND + "/fund-json?isin=" + FUND_ISIN)
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      if (data.error) throw new Error(data.error);
+      // ISIN is blank for iShares holdings (ticker→ISIN not built yet), so
+      // fall back to the ticker as the key so each holding shows as its own row.
+      // Overlaps with direct shares won't match yet — expected until ticker→ISIN.
+      state.fundSplit = (data.holdings || []).map(function (h) {
+        var k = (h.isin && h.isin.trim()) ? h.isin.trim() : "TKR:" + (h.ticker || h.name);
+        return [k, h.name, parseFloat(h.weight) || 0];
+      });
+      render();
+    })
+    .catch(function (e) {
+      state.loadErr = e.message || "Could not load fund holdings";
+      render();
+    });
+}
+
+// Initial paint (loading state + table built on empty fund split), then load.
+render();
+loadFund();
+</script>
+</body>
+</html>
