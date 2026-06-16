@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.2  (2026-06-16)
+     VERSION: v1.3  (2026-06-16)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -11,6 +11,8 @@
            multiplied by that fund's portfolio weight, and summed into the
            same per-company merge — so overlaps across both funds appear.
            Undisclosed is one combined bucket; "not yet split" shrinks.
+     v1.3: visible version stamp added (bottom-right) so a reload can be
+           confirmed at a glance. Keep VERSION below in sync on every change.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -82,6 +84,12 @@
   .panel.overlapcall .notice { color: #7c2f10; }
   .sortmark { font-family: 'IBM Plex Mono', ui-monospace, monospace; margin-left: 4px; font-size: 9px; color: var(--line); }
   .sortmark.active { color: var(--accent); }
+  .vstamp {
+    position: fixed; bottom: 10px; right: 12px; z-index: 50;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px;
+    color: var(--mute); background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; padding: 3px 8px; letter-spacing: 0.06em;
+  }
 </style>
 </head>
 <body>
@@ -97,6 +105,8 @@
   <div id="status"></div>
   <div id="content"></div>
 </div>
+
+<div class="vstamp">v1.3</div>
 
 <script>
 // ============================================================
