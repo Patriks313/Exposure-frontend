@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.1  (2026-06-16)
+     VERSION: v1.2  (2026-06-16)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
-     v1.1: companies now matched by CLEANED NAME (share-class stripped),
-           not ISIN — so direct + fund holdings of the same company merge
-           and overlaps appear. Cash still kept separate, never merged.
+     v1.1: companies matched by CLEANED NAME (share-class stripped),
+           not ISIN — so direct + fund holdings of the same company merge.
+     v1.2: now splits MORE THAN ONE fund. SPLIT_FUNDS lists every fund we
+           look through (USA + Japan). Each fund's holdings are fetched live,
+           multiplied by that fund's portfolio weight, and summed into the
+           same per-company merge — so overlaps across both funds appear.
+           Undisclosed is one combined bucket; "not yet split" shrinks.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -99,10 +103,17 @@
 // Exposure roll-up — real web page (GitHub Pages frontend)
 // Portfolio is baked in for now. Fund holdings are fetched LIVE
 // from the backend database. Merge math ported from the prototype.
+// v1.2: splits every fund listed in SPLIT_FUNDS (USA + Japan).
 // ============================================================
 
 var BACKEND = "https://exposure-backend.onrender.com";
-var FUND_ISIN = "IE00BHZPJ890";
+
+// Every fund we look through. Add a fund's ISIN here once it's stored in the
+// database (via /store-ishares) to start splitting it too.
+var SPLIT_FUNDS = [
+  "IE00BHZPJ890",   // iShares MSCI USA ESG Enhanced
+  "IE00BFNM3L97"    // iShares MSCI Japan Screened
+];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
 var PORTFOLIO = [
@@ -189,15 +200,16 @@ function normalise(name) {
 
 // --- State ---
 var state = {
-  fundSplit: null,   // null = still loading
+  funds: {},          // fundIsin -> array of [holdingIsin, name, weightInFund]
+  allLoaded: false,   // true once every SPLIT_FUNDS fetch has settled
   loadErr: "",
-  view: "all",       // all | overlap
+  view: "all",        // all | overlap
   sort: { col: "total", dir: "desc" }
 };
 
 // --- THE MERGE: build exposure by company (cleaned name) ---
-function buildExposure(fundSplit) {
-  var FUND_SPLIT = fundSplit || [];
+function buildExposure(funds) {
+  var FUNDS = funds || {};
   var map = new Map();
 
   // Match key = cleaned company name. Cash is the one exception: it gets a
@@ -212,30 +224,43 @@ function buildExposure(fundSplit) {
   }
 
   // 1. Direct holdings: shares + cash pass straight through.
-  //    Funds are replaced below; a fund not yet split goes to its own bucket.
+  //    A fund we WILL split (in SPLIT_FUNDS) is skipped here — it's replaced
+  //    below. Any other fund goes to the "not yet split" bucket.
   var notSplitPortW = 0, nNotSplit = 0;
   PORTFOLIO.forEach(function (row) {
     var name = row[0], isin = row[1], w = row[2];
     var cash = isCash(name, isin);
     if (isFund(name) && !cash) {
-      if (isin.trim() !== FUND_ISIN) { notSplitPortW += w * 100; nNotSplit += 1; }
+      if (SPLIT_FUNDS.indexOf(isin.trim()) === -1) { notSplitPortW += w * 100; nNotSplit += 1; }
       return; // fund lines never pass through as themselves
     }
     touch(name, isin, cash).direct += w * 100;
   });
 
-  // 2. Fund split: replace the iShares fund with its holdings.
+  // 2. Split each fund in SPLIT_FUNDS that the portfolio actually holds.
+  //    Each holding's portfolio weight = (weight within fund) × (fund's weight).
   //    Fund holdings carry no ISIN yet — they match purely on cleaned name.
-  var fundLine = PORTFOLIO.find(function (r) { return r[1] === FUND_ISIN; });
-  var fundWeight = fundLine ? fundLine[2] * 100 : 0;
-  var disclosed = 0;
-  FUND_SPLIT.forEach(function (h) {
-    var isin = h[0], name = h[1], wInFund = h[2];
-    disclosed += wInFund;
-    touch(name, isin, false).viaFund += (wInFund / 100) * fundWeight;
+  //    A fund whose holdings haven't loaded yet counts as fully undisclosed
+  //    for the moment, so the total still ties to 100% while loading.
+  var splitFundsInfo = [];        // { name, weight } per split fund
+  var splitWeight = 0;
+  var totalUndiscPortW = 0;
+  SPLIT_FUNDS.forEach(function (fisin) {
+    var fundLine = PORTFOLIO.find(function (r) { return r[1].trim() === fisin; });
+    if (!fundLine) return;        // portfolio doesn't hold this fund — nothing to split
+    var fundWeight = fundLine[2] * 100;
+    var holdings = FUNDS[fisin] || [];
+    var disclosed = 0;
+    holdings.forEach(function (h) {
+      var hIsin = h[0], hName = h[1], wInFund = h[2];
+      disclosed += wInFund;
+      touch(hName, hIsin, false).viaFund += (wInFund / 100) * fundWeight;
+    });
+    var undiscInFund = 100 - disclosed;
+    totalUndiscPortW += (undiscInFund / 100) * fundWeight;
+    splitFundsInfo.push({ name: fundLine[0], weight: fundWeight });
+    splitWeight += fundWeight;
   });
-  var undiscInFund = 100 - disclosed;
-  var undiscPortW = (undiscInFund / 100) * fundWeight;
 
   // 3. Finalise rows
   var list = Array.from(map.values()).map(function (e) {
@@ -245,8 +270,8 @@ function buildExposure(fundSplit) {
     };
   });
 
-  list.push({ isin: "—", name: "Undisclosed (inside iShares fund)",
-    direct: 0, viaFund: undiscPortW, total: undiscPortW, overlap: false, isUndisc: true });
+  list.push({ isin: "—", name: "Undisclosed (inside split funds)",
+    direct: 0, viaFund: totalUndiscPortW, total: totalUndiscPortW, overlap: false, isUndisc: true });
   list.push({ isin: "—", name: "Funds not yet split (" + nNotSplit + " funds)",
     direct: 0, viaFund: notSplitPortW, total: notSplitPortW, overlap: false, isNotSplit: true });
 
@@ -256,7 +281,8 @@ function buildExposure(fundSplit) {
     total: list.reduce(function (s, r) { return s + r.total; }, 0),
     nOverlap: list.filter(function (r) { return r.overlap; }).length,
     nLines: list.length,
-    notSplit: notSplitPortW, nNotSplit: nNotSplit, fundWeight: fundWeight
+    notSplit: notSplitPortW, nNotSplit: nNotSplit,
+    splitFundsInfo: splitFundsInfo, nSplit: splitFundsInfo.length, splitWeight: splitWeight
   };
   return { rows: list, totals: totals };
 }
@@ -283,14 +309,14 @@ function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").
 
 function renderStatus() {
   var el = document.getElementById("status");
-  if (state.fundSplit === null && !state.loadErr) {
+  if (!state.allLoaded && !state.loadErr) {
     el.innerHTML =
       '<div class="panel loading"><div class="notice">' +
       'Loading fund holdings from the database… the free backend can take up to ~50 seconds ' +
       'to wake on the first request. Please wait.</div></div>';
   } else if (state.loadErr) {
     el.innerHTML =
-      '<div class="panel error"><div class="notice"><strong>Couldn\'t load fund holdings.</strong> ' +
+      '<div class="panel error"><div class="notice"><strong>Couldn\'t load some fund holdings.</strong> ' +
       esc(state.loadErr) + '</div></div>';
   } else {
     el.innerHTML = "";
@@ -307,10 +333,12 @@ function sortTh(label, col, numeric) {
 
 function render() {
   renderStatus();
-  var built = buildExposure(state.fundSplit);
+  var built = buildExposure(state.funds);
   var rows = built.rows, totals = built.totals;
   var maxTotal = Math.max.apply(null, rows.map(function (r) { return r.total; }));
   var shown = sortedRows(rows);
+
+  var splitNames = totals.splitFundsInfo.map(function (f) { return f.name; }).join(" and ");
 
   var rowsHtml = shown.map(function (r) {
     var viaColor = r.isUndisc ? "var(--undisc)" : (r.isNotSplit ? "var(--mute)" : "var(--fund)");
@@ -331,10 +359,11 @@ function render() {
   var html =
     // Summary
     '<div class="panel"><h2>What the merge did</h2>' +
-    '<div class="hint">One fund split so far: the iShares MSCI USA ESG Enhanced fund (' +
-      totals.fundWeight.toFixed(2) + '% of the portfolio) broken into its underlying holdings, ' +
-      'read live from the database. The other ' + totals.nNotSplit + ' funds aren\'t split yet — ' +
-      'they sit in their own honest bucket at the bottom of the table, so the total still ties to 100%.</div>' +
+    '<div class="hint">' + totals.nSplit + ' fund' + (totals.nSplit === 1 ? "" : "s") + ' split (' +
+      totals.splitWeight.toFixed(2) + '% of the portfolio): ' + esc(splitNames) +
+      ' — broken into their underlying holdings, read live from the database. The other ' +
+      totals.nNotSplit + ' funds aren\'t split yet — they sit in their own honest bucket at the ' +
+      'bottom of the table, so the total still ties to 100%.</div>' +
     '<div class="stats">' +
       '<div class="stat"><div class="statK">Exposure lines</div><div class="statV">' + totals.nLines + '</div></div>' +
       '<div class="stat"><div class="statK">Overlaps found</div><div class="statV" style="color:var(--accent)">' + totals.nOverlap + '</div></div>' +
@@ -345,13 +374,13 @@ function render() {
     // Overlap callout
     '<div class="panel overlapcall"><h2>The hidden overlap</h2>' +
     '<div class="notice">' + totals.nOverlap + ' compan' + (totals.nOverlap === 1 ? "y is" : "ies are") +
-      ' held both directly and inside the iShares fund. Looking at either holding alone understates the ' +
+      ' held both directly and inside the split funds. Looking at either holding alone understates the ' +
       'real exposure — the roll-up adds them together.</div></div>' +
 
     // Table
     '<div class="panel"><h2>Exposure by company</h2>' +
     '<div class="hint"><strong>Direct</strong> = held as a share. <strong>Via fund</strong> = look-through ' +
-      'from inside the iShares fund. <strong>Total</strong> = true exposure.</div>' +
+      'from inside the split funds. <strong>Total</strong> = true exposure.</div>' +
     '<div style="margin-bottom:12px">' +
       '<button class="pill' + (state.view === "all" ? " active" : "") + '" data-view="all">All ' +
         rows.length + '</button>' +
@@ -373,7 +402,7 @@ function render() {
       '<td class="num" style="font-weight:700">' + totals.total.toFixed(2) + '%</td><td></td>' +
     '</tr></tfoot></table></div>' +
     '<div class="foot">Two honest buckets sit at the bottom, kept separate on purpose. ' +
-      '<strong>Undisclosed</strong> — the part of the iShares fund whose holdings weren\'t listed ' +
+      '<strong>Undisclosed</strong> — the part of the split funds whose holdings weren\'t listed ' +
       '(fund opened, but not fully). <strong>Funds not yet split</strong> — funds we haven\'t looked ' +
       'inside at all yet. Splitting each is the same operation repeated; as more funds are split, this ' +
       'bucket shrinks.</div></div>';
@@ -400,29 +429,37 @@ function wireEvents() {
   });
 }
 
-// --- Load fund holdings live from the backend, then render ---
-function loadFund() {
-  fetch(BACKEND + "/fund-json?isin=" + FUND_ISIN)
-    .then(function (res) { return res.json(); })
-    .then(function (data) {
-      if (data.error) throw new Error(data.error);
-      // Fund holdings carry no ISIN yet (ticker→ISIN not built). That's fine now:
-      // matching is done on the cleaned company NAME, so overlaps still appear.
-      state.fundSplit = (data.holdings || []).map(function (h) {
-        var isin = (h.isin && h.isin.trim()) ? h.isin.trim() : "";
-        return [isin, h.name, parseFloat(h.weight) || 0];
+// --- Load every split fund's holdings live from the backend, then render ---
+function loadFunds() {
+  var pending = SPLIT_FUNDS.length;
+  if (pending === 0) { state.allLoaded = true; render(); return; }
+
+  SPLIT_FUNDS.forEach(function (fisin) {
+    fetch(BACKEND + "/fund-json?isin=" + fisin)
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.error) throw new Error(data.error);
+        // Fund holdings carry no ISIN yet (matching is on the cleaned company NAME).
+        state.funds[fisin] = (data.holdings || []).map(function (h) {
+          var isin = (h.isin && h.isin.trim()) ? h.isin.trim() : "";
+          return [isin, h.name, parseFloat(h.weight) || 0];
+        });
+      })
+      .catch(function (e) {
+        state.loadErr = (state.loadErr ? state.loadErr + " " : "") +
+          (fisin + ": " + (e.message || "could not load"));
+      })
+      .then(function () {
+        pending -= 1;
+        if (pending === 0) { state.allLoaded = true; }
+        render();
       });
-      render();
-    })
-    .catch(function (e) {
-      state.loadErr = e.message || "Could not load fund holdings";
-      render();
-    });
+  });
 }
 
-// Initial paint (loading state + table built on empty fund split), then load.
+// Initial paint (loading state + table built on empty funds), then load.
 render();
-loadFund();
+loadFunds();
 </script>
 </body>
 </html>
