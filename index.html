@@ -1,4 +1,13 @@
 <!DOCTYPE html>
+<!-- ============================================================
+     Exposure Roll-up — frontend page
+     VERSION: v1.1  (2026-06-16)
+     Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
+     Bump this version on every change.
+     v1.1: companies now matched by CLEANED NAME (share-class stripped),
+           not ISIN — so direct + fund holdings of the same company merge
+           and overlaps appear. Cash still kept separate, never merged.
+============================================================ -->
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -77,8 +86,8 @@
   <h1>True company exposure</h1>
   <div class="lede">
     Funds are replaced by their underlying holdings; shares and cash pass through.
-    Everything is then summed by ISIN — so a company held directly <em>and</em> inside a
-    fund shows as one true number.
+    Everything is then summed by company — so a company held directly <em>and</em> inside a
+    fund (even as a different share class) shows as one true number.
   </div>
 
   <div id="status"></div>
@@ -162,6 +171,22 @@ function isFund(name) {
   return FUND_KW.some(function (k) { return name.toUpperCase().includes(k); });
 }
 
+// --- THE COMMON DENOMINATOR: clean a company name down to its core ---
+// Strips punctuation, legal suffixes (Inc, Corp, AG, Ltd…) and share-class
+// markers (Class A, CL A, trailing single letter). So "Alphabet Inc- Class A"
+// and "Alphabet Inc. C" both become "alphabet" and merge as one company.
+function normalise(name) {
+  if (!name) return "";
+  var s = name.trim().toLowerCase();
+  s = s.replace(/[.,'’"\-\/&]/g, " ");
+  s = s.replace(/\bclass\b/g, " ");
+  s = s.replace(/\bcl\b/g, " ");
+  s = s.replace(/\b(inc|corp|corporation|co|company|ag|plc|ltd|limited|oyj|abp|asa|sa|nv|se|spa|holding|holdings|group|ord|adr|the|n)\b/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\s+[a-z]$/, "").trim();
+  return s;
+}
+
 // --- State ---
 var state = {
   fundSplit: null,   // null = still loading
@@ -170,15 +195,19 @@ var state = {
   sort: { col: "total", dir: "desc" }
 };
 
-// --- THE MERGE: build exposure by ISIN ---
+// --- THE MERGE: build exposure by company (cleaned name) ---
 function buildExposure(fundSplit) {
   var FUND_SPLIT = fundSplit || [];
   var map = new Map();
 
-  function key(isin) { return (isin && isin.trim()) ? isin.trim() : "TMP-cash"; }
-  function touch(isin, name) {
-    var k = key(isin);
-    if (!map.has(k)) map.set(k, { isin: k, name: name, direct: 0, viaFund: 0 });
+  // Match key = cleaned company name. Cash is the one exception: it gets a
+  // fixed "CASH" key so it is never merged into a company and never re-normalised.
+  function touch(name, displayIsin, isCashLine) {
+    var k = isCashLine ? "CASH" : "NM:" + normalise(name);
+    if (!map.has(k)) {
+      map.set(k, { isin: (displayIsin && displayIsin.trim()) ? displayIsin.trim() : "—",
+                   name: name, direct: 0, viaFund: 0 });
+    }
     return map.get(k);
   }
 
@@ -187,21 +216,23 @@ function buildExposure(fundSplit) {
   var notSplitPortW = 0, nNotSplit = 0;
   PORTFOLIO.forEach(function (row) {
     var name = row[0], isin = row[1], w = row[2];
-    if (isFund(name) && !isCash(name, isin)) {
+    var cash = isCash(name, isin);
+    if (isFund(name) && !cash) {
       if (isin.trim() !== FUND_ISIN) { notSplitPortW += w * 100; nNotSplit += 1; }
       return; // fund lines never pass through as themselves
     }
-    touch(isin, name).direct += w * 100;
+    touch(name, isin, cash).direct += w * 100;
   });
 
   // 2. Fund split: replace the iShares fund with its holdings.
+  //    Fund holdings carry no ISIN yet — they match purely on cleaned name.
   var fundLine = PORTFOLIO.find(function (r) { return r[1] === FUND_ISIN; });
   var fundWeight = fundLine ? fundLine[2] * 100 : 0;
   var disclosed = 0;
   FUND_SPLIT.forEach(function (h) {
     var isin = h[0], name = h[1], wInFund = h[2];
     disclosed += wInFund;
-    touch(isin, name).viaFund += (wInFund / 100) * fundWeight;
+    touch(name, isin, false).viaFund += (wInFund / 100) * fundWeight;
   });
   var undiscInFund = 100 - disclosed;
   var undiscPortW = (undiscInFund / 100) * fundWeight;
@@ -375,12 +406,11 @@ function loadFund() {
     .then(function (res) { return res.json(); })
     .then(function (data) {
       if (data.error) throw new Error(data.error);
-      // ISIN is blank for iShares holdings (ticker→ISIN not built yet), so
-      // fall back to the ticker as the key so each holding shows as its own row.
-      // Overlaps with direct shares won't match yet — expected until ticker→ISIN.
+      // Fund holdings carry no ISIN yet (ticker→ISIN not built). That's fine now:
+      // matching is done on the cleaned company NAME, so overlaps still appear.
       state.fundSplit = (data.holdings || []).map(function (h) {
-        var k = (h.isin && h.isin.trim()) ? h.isin.trim() : "TKR:" + (h.ticker || h.name);
-        return [k, h.name, parseFloat(h.weight) || 0];
+        var isin = (h.isin && h.isin.trim()) ? h.isin.trim() : "";
+        return [isin, h.name, parseFloat(h.weight) || 0];
       });
       render();
     })
