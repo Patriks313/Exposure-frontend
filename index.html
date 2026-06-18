@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.10  (2026-06-18)
+     VERSION: v1.11  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -41,6 +41,9 @@
            with a mangled name (e.g. iShares "ADOBE INC" vs L&G "ADOBE SYST") that
            name rules can't safely merge now merges on its shared ticker (ADBE) —
            the safe fix for the residual Adobe/Ameriprise/AvalonBay/Fidelity tail.
+     v1.11: added two more L&G funds to SPLIT_FUNDS — L&G MSCI Europe Select
+           (IE00BKLTRN76) and L&G Japan Equity (IE00BFXR5T61). Both carry ISINs
+           and are non-US, so they merge by ISIN/name (no US-ticker resolve).
 ============================================================ -->
 <html lang="en">
 <head>
@@ -134,7 +137,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.10</div>
+<div class="vstamp">v1.11</div>
 
 <script>
 // ============================================================
@@ -151,7 +154,9 @@ var BACKEND = "https://exposure-backend.onrender.com";
 var SPLIT_FUNDS = [
   "IE00BHZPJ890",   // iShares MSCI USA ESG Enhanced
   "IE00BFNM3L97",   // iShares MSCI Japan Screened
-  "IE00BKLWY790"    // L&G US ESG Paris Aligned
+  "IE00BKLWY790",   // L&G US ESG Paris Aligned
+  "IE00BKLTRN76",   // L&G MSCI Europe Select
+  "IE00BFXR5T61"    // L&G Japan Equity
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
