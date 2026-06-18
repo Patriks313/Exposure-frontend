@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.3  (2026-06-16)
+     VERSION: v1.4  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -13,6 +13,8 @@
            Undisclosed is one combined bucket; "not yet split" shrinks.
      v1.3: visible version stamp added (bottom-right) so a reload can be
            confirmed at a glance. Keep VERSION below in sync on every change.
+     v1.4: added L&G US ESG (IE00BKLWY790) to SPLIT_FUNDS — first non-iShares
+           fund split. Its holdings carry ISINs (iShares did not).
 ============================================================ -->
 <html lang="en">
 <head>
@@ -106,7 +108,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.3</div>
+<div class="vstamp">v1.4</div>
 
 <script>
 // ============================================================
@@ -122,7 +124,8 @@ var BACKEND = "https://exposure-backend.onrender.com";
 // database (via /store-ishares) to start splitting it too.
 var SPLIT_FUNDS = [
   "IE00BHZPJ890",   // iShares MSCI USA ESG Enhanced
-  "IE00BFNM3L97"    // iShares MSCI Japan Screened
+  "IE00BFNM3L97",   // iShares MSCI Japan Screened
+  "IE00BKLWY790"    // L&G US ESG Paris Aligned
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
