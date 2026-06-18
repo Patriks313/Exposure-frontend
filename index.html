@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.5  (2026-06-18)
+     VERSION: v1.6  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -18,6 +18,9 @@
      v1.5: matching upgraded — merge by ISIN when a holding has one, fall back
            to cleaned name when it doesn't. Fixes L&G holdings (which carry
            ISINs) merging with the same companies held directly.
+     v1.6: name-cleaner extended to strip par-value/instrument noise
+           ("USD 0.001", "NPV", "COM", trailing "NEW") so fund-to-fund
+           duplicates that ISIN can't merge (iShares has no ISIN) collapse too.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -111,7 +114,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.5</div>
+<div class="vstamp">v1.6</div>
 
 <script>
 // ============================================================
@@ -199,17 +202,24 @@ function isFund(name) {
 }
 
 // --- THE COMMON DENOMINATOR: clean a company name down to its core ---
-// Strips punctuation, legal suffixes (Inc, Corp, AG, Ltd…) and share-class
-// markers (Class A, CL A, trailing single letter). So "Alphabet Inc- Class A"
-// and "Alphabet Inc. C" both become "alphabet" and merge as one company.
+// Strips punctuation, legal suffixes (Inc, Corp, AG, Ltd…), share-class markers
+// (Class A, CL A, trailing single letter), and — added v1.6 (Route A) — the
+// par-value / instrument noise that providers like L&G append to names
+// ("USD 0.001", "USD0.00000625", "NPV", trailing "COM"/"NEW"). So iShares'
+// clean "CISCO SYSTEMS INC" and L&G's noisy "NVIDIA CORP USD 0.001" both reduce
+// to the same company token and merge, even though iShares has no ISIN to match on.
 function normalise(name) {
   if (!name) return "";
   var s = name.trim().toLowerCase();
-  s = s.replace(/[.,'’"\-\/&]/g, " ");
+  s = s.replace(/\busd\s*[\d.]+/g, " ");   // par value: "usd 0.001", "usd0.00000625", "usd 1.0"
+  s = s.replace(/\bnpv\b/g, " ");          // "no par value"
+  s = s.replace(/\bcom\b/g, " ");          // "common stock" marker (keeps amazon/salesforce consistent)
+  s = s.replace(/[.,'’"\-\/&+]/g, " ");
   s = s.replace(/\bclass\b/g, " ");
   s = s.replace(/\bcl\b/g, " ");
   s = s.replace(/\b(inc|corp|corporation|co|company|ag|plc|ltd|limited|oyj|abp|asa|sa|nv|se|spa|holding|holdings|group|ord|adr|the|n)\b/g, " ");
   s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\s+new$/, "").trim();     // trailing "new" (new-shares marker)
   s = s.replace(/\s+[a-z]$/, "").trim();
   return s;
 }
