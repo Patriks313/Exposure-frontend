@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.9  (2026-06-18)
+     VERSION: v1.10  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -33,7 +33,14 @@
            merging Interactive Brokers and Lennar. Deliberately NOT doing blanket
            prefix-merge ("adobe"->"adobe systems") — tested, it false-merges
            Snap/Snap-on, Rocket/Rocket Lab, Asahi Group/Asahi Kasei. Those need
-           ticker->ISIN, which names cannot safely resolve.
+           the ticker bridge, which names cannot safely resolve.
+     v1.10: THE TICKER BRIDGE. Holdings now also match by TICKER (order: ISIN,
+           then ticker, then cleaned name). iShares files carry a ticker but no
+           ISIN; L&G now carries both (its ISINs were resolved to US tickers via
+           OpenFIGI on the backend and stored). So a company sitting in BOTH funds
+           with a mangled name (e.g. iShares "ADOBE INC" vs L&G "ADOBE SYST") that
+           name rules can't safely merge now merges on its shared ticker (ADBE) —
+           the safe fix for the residual Adobe/Ameriprise/AvalonBay/Fidelity tail.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -127,7 +134,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.9</div>
+<div class="vstamp">v1.10</div>
 
 <script>
 // ============================================================
@@ -274,7 +281,7 @@ function normalise(name) {
 
 // --- State ---
 var state = {
-  funds: {},          // fundIsin -> array of [holdingIsin, name, weightInFund]
+  funds: {},          // fundIsin -> array of [holdingIsin, name, weightInFund, ticker]
   allLoaded: false,   // true once every SPLIT_FUNDS fetch has settled
   loadErr: "",
   view: "all",        // all | overlap
@@ -282,20 +289,25 @@ var state = {
 };
 
 // --- THE MERGE: build exposure by company ---
-// Matching (v1.5): a holding is matched to a company by its ISIN when it HAS
-// one (the strong identifier — L&G and direct holdings carry ISINs), and falls
-// back to the cleaned company name when it doesn't (iShares files have no ISIN).
-// Name-cleaning still runs for everything, so share classes (Alphabet A vs C)
-// and ISIN-less holdings still merge by name. Cash is the one exception: it
-// never merges — it sits in its own bucket, matched neither by ISIN nor name.
+// Matching (v1.10): a holding is matched to a company in this order —
+//   1. ISIN  — the strong identifier (L&G and direct holdings carry one).
+//   2. TICKER — bridges the two funds: iShares files carry a ticker but no
+//      ISIN; L&G now carries both (its ISINs were resolved to US tickers on
+//      the backend), so a company in BOTH funds whose name is too mangled to
+//      match cleanly (iShares "ADOBE INC" vs L&G "ADOBE SYST") merges on ADBE.
+//   3. cleaned NAME — the fallback (still catches share classes, Alphabet A/C,
+//      and any holding that has neither a shared ISIN nor a ticker).
+// Cash is the one exception: it never merges — it sits in its own bucket,
+// matched by none of the three keys.
 function buildExposure(funds) {
   var FUNDS = funds || {};
   var entries = [];          // every company line (deduped); finalised below
-  var byIsin = new Map();    // holding ISIN  -> entry
-  var byName = new Map();    // cleaned name  -> entry
+  var byIsin = new Map();    // holding ISIN   -> entry
+  var byTicker = new Map();  // holding ticker -> entry
+  var byName = new Map();    // cleaned name   -> entry
   var cashEntry = null;
 
-  function touch(name, displayIsin, isCashLine) {
+  function touch(name, displayIsin, ticker, isCashLine) {
     // Cash: fixed bucket, never indexed, never merged into a company.
     if (isCashLine) {
       if (!cashEntry) {
@@ -306,18 +318,22 @@ function buildExposure(funds) {
     }
     var nm = normalise(name);
     var ik = (displayIsin && displayIsin.trim()) ? displayIsin.trim() : "";
+    var tk = (ticker && ticker.trim()) ? ticker.trim() : "";
     var entry = null;
     // 1. Strong match: same ISIN (only holdings that actually carry one).
     if (ik && byIsin.has(ik)) entry = byIsin.get(ik);
-    // 2. Fallback match: same cleaned company name.
+    // 2. Ticker match: bridges iShares (ticker, no ISIN) and L&G (now both).
+    if (!entry && tk && byTicker.has(tk)) entry = byTicker.get(tk);
+    // 3. Fallback match: same cleaned company name.
     if (!entry && nm && byName.has(nm)) entry = byName.get(nm);
-    // 3. Otherwise it's a new company.
+    // 4. Otherwise it's a new company.
     if (!entry) {
       entry = { isin: ik || "—", name: name, direct: 0, viaFund: 0 };
       entries.push(entry);
     }
     // Register this holding's identifiers so later holdings find this entry.
     if (ik && !byIsin.has(ik)) byIsin.set(ik, entry);
+    if (tk && !byTicker.has(tk)) byTicker.set(tk, entry);
     if (nm && !byName.has(nm)) byName.set(nm, entry);
     // Surface an ISIN in the table once one is known for this company.
     if ((!entry.isin || entry.isin === "—") && ik) entry.isin = ik;
@@ -335,7 +351,7 @@ function buildExposure(funds) {
       if (SPLIT_FUNDS.indexOf(isin.trim()) === -1) { notSplitPortW += w * 100; nNotSplit += 1; }
       return; // fund lines never pass through as themselves
     }
-    touch(name, isin, cash).direct += w * 100;
+    touch(name, isin, "", cash).direct += w * 100;
   });
 
   // 2. Split each fund in SPLIT_FUNDS that the portfolio actually holds.
@@ -353,9 +369,9 @@ function buildExposure(funds) {
     var holdings = FUNDS[fisin] || [];
     var disclosed = 0;
     holdings.forEach(function (h) {
-      var hIsin = h[0], hName = h[1], wInFund = h[2];
+      var hIsin = h[0], hName = h[1], wInFund = h[2], hTicker = h[3] || "";
       disclosed += wInFund;
-      touch(hName, hIsin, false).viaFund += (wInFund / 100) * fundWeight;
+      touch(hName, hIsin, hTicker, false).viaFund += (wInFund / 100) * fundWeight;
     });
     var undiscInFund = 100 - disclosed;
     totalUndiscPortW += (undiscInFund / 100) * fundWeight;
@@ -540,11 +556,14 @@ function loadFunds() {
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (data.error) throw new Error(data.error);
-        // Carry each holding's ISIN through (L&G has them; iShares doesn't);
-        // the merge matches by ISIN when present, else by cleaned name.
+        // Carry each holding's ISIN and TICKER through. L&G has both (ISIN
+        // native, ticker resolved on the backend); iShares has only a ticker;
+        // direct holdings have only an ISIN. The merge tries ISIN, then ticker,
+        // then cleaned name (see touch()).
         state.funds[fisin] = (data.holdings || []).map(function (h) {
           var isin = (h.isin && h.isin.trim()) ? h.isin.trim() : "";
-          return [isin, h.name, parseFloat(h.weight) || 0];
+          var ticker = (h.ticker && h.ticker.trim()) ? h.ticker.trim() : "";
+          return [isin, h.name, parseFloat(h.weight) || 0, ticker];
         });
       })
       .catch(function (e) {
