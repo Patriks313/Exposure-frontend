@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.14  (2026-06-18)
+     VERSION: v1.15  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -63,6 +63,15 @@
            ISINs + sector, non-US, so it merges by ISIN/name (no US-ticker
            resolve). 73 holdings. (Also fixed the portfolio label: this fund is
            "MSCI Canada Screened", not "MSCI Canada ESG Screened".)
+
+     v1.15: added Carnegie Investment Fund - Svenska Aktier (LU2122479103) to
+           SPLIT_FUNDS — sixth provider (Carnegie), and the biggest single
+           chunk in the portfolio (~20%). Holdings live only inside Carnegie's
+           bi-annual SICAV report PDF, so the new /store-carnegie route auto-
+           finds the newest report on carnegie.se, reads the Svenska Aktier
+           securities-portfolio page, and stores it. No ISIN/ticker in the file
+           -> merges by cleaned name (like iShares). 33 holdings as of
+           2025-12-31. (First Track-B / Swedish fund done.)
 ============================================================ -->
 <html lang="en">
 <head>
@@ -156,7 +165,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.14</div>
+<div class="vstamp">v1.15</div>
 
 <script>
 // ============================================================
@@ -178,7 +187,8 @@ var SPLIT_FUNDS = [
   "IE00BFXR5T61",   // L&G Japan Equity
   "IE00BH4GPZ28",   // SPDR S&P 500 Leaders (SPPY)
   "LU1940199711",  // Amundi MSCI Europe ESG Selection (uploaded, no fetch URL)
-  "LU0476289540"   // Xtrackers MSCI Canada Screened (DWS, fetch by ISIN)
+  "LU0476289540",  // Xtrackers MSCI Canada Screened (DWS, fetch by ISIN)
+  "LU2122479103"   // Carnegie Inv. Fund - Svenska Aktier (Carnegie, PDF report)
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
