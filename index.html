@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.7  (2026-06-18)
+     VERSION: v1.8  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -25,6 +25,10 @@
            svcs->services, mgmt->management, hldgs->holdings, sys->systems, etc.)
            so L&G's abbreviated names merge with iShares' full names. Safe: expands
            to full words, never truncates. Small mangled-truncation tail remains.
+     v1.8: more safe merges — strip parentheses ("(The)"), drop truncated
+           suffixes (IN, COR, SHS), expand SOLUT->solutions, and singularise
+           plurals (MATERIAL/MATERIALS). Residual: names where a provider omits
+           a whole word (e.g. "AMERIPRISE" vs "AMERIPRISE FINANCIAL").
 ============================================================ -->
 <html lang="en">
 <head>
@@ -118,7 +122,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.7</div>
+<div class="vstamp">v1.8</div>
 
 <script>
 // ============================================================
@@ -233,12 +237,14 @@ var NAME_ABBR = {
   pmts:'payments', pmt:'payment', diag:'diagnostics', wks:'works', wtr:'water',
   softw:'software', sci:'scientific', technol:'technology', prods:'products',
   chems:'chemicals', mls:'mills', domini:'dominion', ins:'insurance',
-  pharm:'pharmaceutical', natl:'national', capit:'capital', sto:'storage', spac:'space'
+  pharm:'pharmaceutical', natl:'national', capit:'capital', sto:'storage', spac:'space',
+  solut:'solutions', soln:'solutions'
 };
 var NAME_DROP = {};
 ['inc','corp','corporation','co','company','companies','ag','plc','ltd','limited','oyj',
  'abp','asa','sa','nv','se','spa','holding','holdings','group','ord','adr','the','n',
- 'class','cl','and','of','reit','del','new'].forEach(function (w) { NAME_DROP[w] = 1; });
+ 'class','cl','and','of','reit','del','new',
+ 'in','cor','shs','sh','stk','sbi'].forEach(function (w) { NAME_DROP[w] = 1; });
 
 function normalise(name) {
   if (!name) return "";
@@ -248,11 +254,15 @@ function normalise(name) {
   s = s.replace(/\bnpv\b/g, " ");               // "no par value"
   s = s.replace(/\bcommon stock\b/g, " ");
   s = s.replace(/\bcom\b/g, " ");               // "common stock" marker
-  s = s.replace(/[.,'’"\-\/&+]/g, " ");
+  s = s.replace(/[.,'’"\-\/&+()]/g, " ");       // punctuation incl. parentheses ("(The)")
   var toks = s.split(/\s+/).filter(Boolean)
     .map(function (t) { return NAME_ABBR[t] || t; })   // expand abbreviations
     .filter(function (t) { return !NAME_DROP[t]; })    // drop suffixes / noise words
-    .filter(function (t) { return !/^\d+$/.test(t); });// drop bare numbers
+    .filter(function (t) { return !/^\d+$/.test(t); }) // drop bare numbers
+    .map(function (t) {                                // singularise (material(s), system(s)…)
+      return (t.length > 4 && t.slice(-1) === "s" && t.slice(-2) !== "ss" && t.slice(-2) !== "us")
+        ? t.slice(0, -1) : t;
+    });
   var k = toks.join(" ").trim();
   k = k.replace(/\s+[a-z]$/, "").trim();        // trailing single letter (stray share class)
   return k;
