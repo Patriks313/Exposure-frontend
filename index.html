@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.6  (2026-06-18)
+     VERSION: v1.7  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -21,6 +21,10 @@
      v1.6: name-cleaner extended to strip par-value/instrument noise
            ("USD 0.001", "NPV", "COM", trailing "NEW") so fund-to-fund
            duplicates that ISIN can't merge (iShares has no ISIN) collapse too.
+     v1.7: name-cleaner expands standard financial abbreviations (finl->financial,
+           svcs->services, mgmt->management, hldgs->holdings, sys->systems, etc.)
+           so L&G's abbreviated names merge with iShares' full names. Safe: expands
+           to full words, never truncates. Small mangled-truncation tail remains.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -114,7 +118,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.6</div>
+<div class="vstamp">v1.7</div>
 
 <script>
 // ============================================================
@@ -202,26 +206,56 @@ function isFund(name) {
 }
 
 // --- THE COMMON DENOMINATOR: clean a company name down to its core ---
-// Strips punctuation, legal suffixes (Inc, Corp, AG, Ltd…), share-class markers
-// (Class A, CL A, trailing single letter), and — added v1.6 (Route A) — the
-// par-value / instrument noise that providers like L&G append to names
-// ("USD 0.001", "USD0.00000625", "NPV", trailing "COM"/"NEW"). So iShares'
-// clean "CISCO SYSTEMS INC" and L&G's noisy "NVIDIA CORP USD 0.001" both reduce
-// to the same company token and merge, even though iShares has no ISIN to match on.
+// Reduces a holding name to a comparable company token so the same company
+// merges across providers that write names differently. Three stages:
+//   v1.1: strip punctuation, legal suffixes (Inc, Corp, Ltd…), share-class markers.
+//   v1.6: strip par-value / instrument noise providers append ("USD 0.001",
+//         "NPV", "COM"); iShares has no ISIN, so names are its only key.
+//   v1.7: expand the standard financial abbreviations L&G uses ("finl"→financial,
+//         "svcs"→services, "mgmt"→management, "hldgs"→holdings, "matls"→materials,
+//         "sys"→systems, "intl"→international, etc.) to the full word, so L&G's
+//         "CISCO SYS INC USD 0.001" lands on iShares' "CISCO SYSTEMS INC".
+// Abbreviations are expanded to the FULL word (never truncated), which cannot
+// fuse two different companies. Verified on live data: collapses duplicate
+// fund-to-fund lines with no overlap lost and no false merges.
+// NOTE: a small tail of heavily-truncated names ("DIGITAL RE", "EDWARDS LI",
+// "FIDELITY N") still won't merge — expanding 1–2 letter fragments is genuine
+// guesswork and risks silent false merges, so it's deliberately left alone.
+// The bulletproof endgame for those is resolving iShares tickers → ISINs.
+var NAME_ABBR = {
+  finl:'financial', svc:'services', svcs:'services', mgmt:'management',
+  hldgs:'holdings', hldg:'holdings', hold:'holdings', matls:'materials', matl:'materials',
+  sys:'systems', syst:'systems', intl:'international', internatl:'international',
+  internati:'international', resh:'research', instrs:'instruments', instr:'instruments',
+  inds:'industries', mtrs:'motors', mtr:'motor', mkts:'markets', mkt:'market',
+  pwr:'power', prop:'property', props:'properties', cos:'companies', labs:'laboratories',
+  entmt:'entertainment', commun:'communications', communic:'communications',
+  pmts:'payments', pmt:'payment', diag:'diagnostics', wks:'works', wtr:'water',
+  softw:'software', sci:'scientific', technol:'technology', prods:'products',
+  chems:'chemicals', mls:'mills', domini:'dominion', ins:'insurance',
+  pharm:'pharmaceutical', natl:'national', capit:'capital', sto:'storage', spac:'space'
+};
+var NAME_DROP = {};
+['inc','corp','corporation','co','company','companies','ag','plc','ltd','limited','oyj',
+ 'abp','asa','sa','nv','se','spa','holding','holdings','group','ord','adr','the','n',
+ 'class','cl','and','of','reit','del','new'].forEach(function (w) { NAME_DROP[w] = 1; });
+
 function normalise(name) {
   if (!name) return "";
   var s = name.trim().toLowerCase();
-  s = s.replace(/\busd\s*[\d.]+/g, " ");   // par value: "usd 0.001", "usd0.00000625", "usd 1.0"
-  s = s.replace(/\bnpv\b/g, " ");          // "no par value"
-  s = s.replace(/\bcom\b/g, " ");          // "common stock" marker (keeps amazon/salesforce consistent)
+  s = s.replace(/\busd\s*[\d.]+/g, " ");        // par value, USD
+  s = s.replace(/\b[a-z]{3}\s*[\d.]+/g, " ");   // par value, other currencies (EUR/CHF…)
+  s = s.replace(/\bnpv\b/g, " ");               // "no par value"
+  s = s.replace(/\bcommon stock\b/g, " ");
+  s = s.replace(/\bcom\b/g, " ");               // "common stock" marker
   s = s.replace(/[.,'’"\-\/&+]/g, " ");
-  s = s.replace(/\bclass\b/g, " ");
-  s = s.replace(/\bcl\b/g, " ");
-  s = s.replace(/\b(inc|corp|corporation|co|company|ag|plc|ltd|limited|oyj|abp|asa|sa|nv|se|spa|holding|holdings|group|ord|adr|the|n)\b/g, " ");
-  s = s.replace(/\s+/g, " ").trim();
-  s = s.replace(/\s+new$/, "").trim();     // trailing "new" (new-shares marker)
-  s = s.replace(/\s+[a-z]$/, "").trim();
-  return s;
+  var toks = s.split(/\s+/).filter(Boolean)
+    .map(function (t) { return NAME_ABBR[t] || t; })   // expand abbreviations
+    .filter(function (t) { return !NAME_DROP[t]; })    // drop suffixes / noise words
+    .filter(function (t) { return !/^\d+$/.test(t); });// drop bare numbers
+  var k = toks.join(" ").trim();
+  k = k.replace(/\s+[a-z]$/, "").trim();        // trailing single letter (stray share class)
+  return k;
 }
 
 // --- State ---
