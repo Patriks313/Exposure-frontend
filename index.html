@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.4  (2026-06-18)
+     VERSION: v1.5  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -15,6 +15,9 @@
            confirmed at a glance. Keep VERSION below in sync on every change.
      v1.4: added L&G US ESG (IE00BKLWY790) to SPLIT_FUNDS — first non-iShares
            fund split. Its holdings carry ISINs (iShares did not).
+     v1.5: matching upgraded — merge by ISIN when a holding has one, fall back
+           to cleaned name when it doesn't. Fixes L&G holdings (which carry
+           ISINs) merging with the same companies held directly.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -108,7 +111,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.4</div>
+<div class="vstamp">v1.5</div>
 
 <script>
 // ============================================================
@@ -220,20 +223,47 @@ var state = {
   sort: { col: "total", dir: "desc" }
 };
 
-// --- THE MERGE: build exposure by company (cleaned name) ---
+// --- THE MERGE: build exposure by company ---
+// Matching (v1.5): a holding is matched to a company by its ISIN when it HAS
+// one (the strong identifier — L&G and direct holdings carry ISINs), and falls
+// back to the cleaned company name when it doesn't (iShares files have no ISIN).
+// Name-cleaning still runs for everything, so share classes (Alphabet A vs C)
+// and ISIN-less holdings still merge by name. Cash is the one exception: it
+// never merges — it sits in its own bucket, matched neither by ISIN nor name.
 function buildExposure(funds) {
   var FUNDS = funds || {};
-  var map = new Map();
+  var entries = [];          // every company line (deduped); finalised below
+  var byIsin = new Map();    // holding ISIN  -> entry
+  var byName = new Map();    // cleaned name  -> entry
+  var cashEntry = null;
 
-  // Match key = cleaned company name. Cash is the one exception: it gets a
-  // fixed "CASH" key so it is never merged into a company and never re-normalised.
   function touch(name, displayIsin, isCashLine) {
-    var k = isCashLine ? "CASH" : "NM:" + normalise(name);
-    if (!map.has(k)) {
-      map.set(k, { isin: (displayIsin && displayIsin.trim()) ? displayIsin.trim() : "—",
-                   name: name, direct: 0, viaFund: 0 });
+    // Cash: fixed bucket, never indexed, never merged into a company.
+    if (isCashLine) {
+      if (!cashEntry) {
+        cashEntry = { isin: "—", name: name, direct: 0, viaFund: 0 };
+        entries.push(cashEntry);
+      }
+      return cashEntry;
     }
-    return map.get(k);
+    var nm = normalise(name);
+    var ik = (displayIsin && displayIsin.trim()) ? displayIsin.trim() : "";
+    var entry = null;
+    // 1. Strong match: same ISIN (only holdings that actually carry one).
+    if (ik && byIsin.has(ik)) entry = byIsin.get(ik);
+    // 2. Fallback match: same cleaned company name.
+    if (!entry && nm && byName.has(nm)) entry = byName.get(nm);
+    // 3. Otherwise it's a new company.
+    if (!entry) {
+      entry = { isin: ik || "—", name: name, direct: 0, viaFund: 0 };
+      entries.push(entry);
+    }
+    // Register this holding's identifiers so later holdings find this entry.
+    if (ik && !byIsin.has(ik)) byIsin.set(ik, entry);
+    if (nm && !byName.has(nm)) byName.set(nm, entry);
+    // Surface an ISIN in the table once one is known for this company.
+    if ((!entry.isin || entry.isin === "—") && ik) entry.isin = ik;
+    return entry;
   }
 
   // 1. Direct holdings: shares + cash pass straight through.
@@ -252,7 +282,7 @@ function buildExposure(funds) {
 
   // 2. Split each fund in SPLIT_FUNDS that the portfolio actually holds.
   //    Each holding's portfolio weight = (weight within fund) × (fund's weight).
-  //    Fund holdings carry no ISIN yet — they match purely on cleaned name.
+  //    Holdings match by ISIN when present, else by cleaned name (see touch()).
   //    A fund whose holdings haven't loaded yet counts as fully undisclosed
   //    for the moment, so the total still ties to 100% while loading.
   var splitFundsInfo = [];        // { name, weight } per split fund
@@ -276,7 +306,7 @@ function buildExposure(funds) {
   });
 
   // 3. Finalise rows
-  var list = Array.from(map.values()).map(function (e) {
+  var list = entries.map(function (e) {
     return {
       isin: e.isin, name: e.name, direct: e.direct, viaFund: e.viaFund,
       total: e.direct + e.viaFund, overlap: e.direct > 0 && e.viaFund > 0
@@ -452,7 +482,8 @@ function loadFunds() {
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (data.error) throw new Error(data.error);
-        // Fund holdings carry no ISIN yet (matching is on the cleaned company NAME).
+        // Carry each holding's ISIN through (L&G has them; iShares doesn't);
+        // the merge matches by ISIN when present, else by cleaned name.
         state.funds[fisin] = (data.holdings || []).map(function (h) {
           var isin = (h.isin && h.isin.trim()) ? h.isin.trim() : "";
           return [isin, h.name, parseFloat(h.weight) || 0];
