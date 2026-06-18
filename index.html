@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.12  (2026-06-18)
+     VERSION: v1.13  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -49,6 +49,13 @@
            229 holdings were resolved to US tickers via OpenFIGI on the backend,
            so it merges on ISIN + ticker (surfaces the "hidden NVIDIA" overlap
            with the iShares + L&G US funds).
+     v1.13: added Amundi MSCI Europe ESG Selection (LU1940199711) to SPLIT_FUNDS
+           — fourth provider (Amundi). Amundi publishes NO download URL (the
+           .xlsx is built in-browser), so the file is UPLOADED to the new
+           /store-amundi route instead of fetched. Carries ISINs, non-US, so
+           it merges by ISIN/name (no US-ticker resolve). 208 holdings.
+           (Also fixed the portfolio label: this fund is "ESG Selection",
+           not "ESG Leaders".)
 ============================================================ -->
 <html lang="en">
 <head>
@@ -142,7 +149,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.12</div>
+<div class="vstamp">v1.13</div>
 
 <script>
 // ============================================================
@@ -162,7 +169,8 @@ var SPLIT_FUNDS = [
   "IE00BKLWY790",   // L&G US ESG Paris Aligned
   "IE00BKLTRN76",   // L&G MSCI Europe Select
   "IE00BFXR5T61",   // L&G Japan Equity
-  "IE00BH4GPZ28"    // SPDR S&P 500 Leaders (SPPY)
+  "IE00BH4GPZ28",   // SPDR S&P 500 Leaders (SPPY)
+  "LU1940199711"    // Amundi MSCI Europe ESG Selection (uploaded, no fetch URL)
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
@@ -173,7 +181,7 @@ var PORTFOLIO = [
   ["Alibaba Group Holding Ltd","US01609W1027",0.00159234],["ALK-Abelló B","DK0061802139",0.00413273],
   ["Alphabet Inc- Class A","US02079K3059",0.00754625],["Amazon.com","US0231351067",0.00609869],
   ["Ambu","DK0060946788",0.00219815],["Ameresco","US02361E1082",0.00257173],
-  ["Amphenol Corp","US0320951017",0.00175823],["Amundi MSCI Europe ESG Leaders UCITS ETF","LU1940199711",0.02807822],
+  ["Amphenol Corp","US0320951017",0.00175823],["Amundi MSCI Europe ESG Selection UCITS ETF","LU1940199711",0.02807822],
   ["AQ Group","SE0022062196",0.00356490],["Arcadis","NL0006237562",0.00270748],
   ["Array Technologies","US04271T1007",0.00212255],["ASML Holding","NL0010273215",0.00177487],
   ["Atlas Copco B","SE0017486897",0.01089804],["ATS Corporation","CA00217Y1043",0.00226382],
