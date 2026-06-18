@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.8  (2026-06-18)
+     VERSION: v1.9  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -29,6 +29,11 @@
            suffixes (IN, COR, SHS), expand SOLUT->solutions, and singularise
            plurals (MATERIAL/MATERIALS). Residual: names where a provider omits
            a whole word (e.g. "AMERIPRISE" vs "AMERIPRISE FINANCIAL").
+     v1.9: drop leftover "CLAS" and all single-letter tokens (share-class A/B/C),
+           merging Interactive Brokers and Lennar. Deliberately NOT doing blanket
+           prefix-merge ("adobe"->"adobe systems") — tested, it false-merges
+           Snap/Snap-on, Rocket/Rocket Lab, Asahi Group/Asahi Kasei. Those need
+           ticker->ISIN, which names cannot safely resolve.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -122,7 +127,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.8</div>
+<div class="vstamp">v1.9</div>
 
 <script>
 // ============================================================
@@ -244,7 +249,7 @@ var NAME_DROP = {};
 ['inc','corp','corporation','co','company','companies','ag','plc','ltd','limited','oyj',
  'abp','asa','sa','nv','se','spa','holding','holdings','group','ord','adr','the','n',
  'class','cl','and','of','reit','del','new',
- 'in','cor','shs','sh','stk','sbi'].forEach(function (w) { NAME_DROP[w] = 1; });
+ 'in','cor','shs','sh','stk','sbi','clas'].forEach(function (w) { NAME_DROP[w] = 1; });
 
 function normalise(name) {
   if (!name) return "";
@@ -262,10 +267,9 @@ function normalise(name) {
     .map(function (t) {                                // singularise (material(s), system(s)…)
       return (t.length > 4 && t.slice(-1) === "s" && t.slice(-2) !== "ss" && t.slice(-2) !== "us")
         ? t.slice(0, -1) : t;
-    });
-  var k = toks.join(" ").trim();
-  k = k.replace(/\s+[a-z]$/, "").trim();        // trailing single letter (stray share class)
-  return k;
+    })
+    .filter(function (t) { return t.length > 1; });    // drop single-letter tokens (share-class A/B/C)
+  return toks.join(" ").trim();
 }
 
 // --- State ---
