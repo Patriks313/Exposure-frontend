@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.13  (2026-06-18)
+     VERSION: v1.14  (2026-06-18)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -56,6 +56,13 @@
            it merges by ISIN/name (no US-ticker resolve). 208 holdings.
            (Also fixed the portfolio label: this fund is "ESG Selection",
            not "ESG Leaders".)
+     v1.14: added Xtrackers MSCI Canada Screened (LU0476289540) to SPLIT_FUNDS
+           — fifth provider (Xtrackers / DWS). Easiest fetch yet: the holdings
+           CSV lives at a stable URL built from the ISIN alone (no fund-number,
+           UUID or ticker), served by the new /store-xtrackers route. Carries
+           ISINs + sector, non-US, so it merges by ISIN/name (no US-ticker
+           resolve). 73 holdings. (Also fixed the portfolio label: this fund is
+           "MSCI Canada Screened", not "MSCI Canada ESG Screened".)
 ============================================================ -->
 <html lang="en">
 <head>
@@ -149,7 +156,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.13</div>
+<div class="vstamp">v1.14</div>
 
 <script>
 // ============================================================
@@ -170,7 +177,8 @@ var SPLIT_FUNDS = [
   "IE00BKLTRN76",   // L&G MSCI Europe Select
   "IE00BFXR5T61",   // L&G Japan Equity
   "IE00BH4GPZ28",   // SPDR S&P 500 Leaders (SPPY)
-  "LU1940199711"    // Amundi MSCI Europe ESG Selection (uploaded, no fetch URL)
+  "LU1940199711",  // Amundi MSCI Europe ESG Selection (uploaded, no fetch URL)
+  "LU0476289540"   // Xtrackers MSCI Canada Screened (DWS, fetch by ISIN)
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
@@ -227,7 +235,7 @@ var PORTFOLIO = [
   ["THERMO FISHER SCIENTIFIC ORD","US8835561023",0.00358101],["TransUnion","US89400J1079",0.00150521],
   ["UnitedHealth Group Inc","US91324P1021",0.00413763],["Vestas Wind Systems","DK0061539921",0.00606753],
   ["VISA","US92826C8394",0.00245205],["Wärtsilä Oyj Abp","FI0009003727",0.00639306],
-  ["Xtrackers MSCI Canada ESG Screened UCITS ETF","LU0476289540",0.01429296],["Xylem Inc","US98419M1009",0.00193810],
+  ["Xtrackers MSCI Canada Screened UCITS ETF","LU0476289540",0.01429296],["Xylem Inc","US98419M1009",0.00193810],
   ["SEK","",0.00687246]
 ];
 
