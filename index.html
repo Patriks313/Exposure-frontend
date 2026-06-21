@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.16  (2026-06-21)
+     VERSION: v1.18  (2026-06-21)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -83,6 +83,19 @@
            a second wave to fetch each fund-of-funds' sub-funds (they are not
            top-level portfolio holdings). FUND_OF_FUNDS lists which funds carry
            sub-funds rather than companies.
+
+     v1.17: replaced the right-hand "Share of portfolio" bars with a
+           CUMULATIVE % column. It runs a running total down whichever %
+           column you've sorted on (Total / Direct / Via fund), high-to-low,
+           so you can read "top N = X% of the portfolio" at a glance. Sorted
+           by name/ISIN or ascending — where a running total is meaningless —
+           it shows "—". Ends at that column's total (100% for Total).
+
+     v1.18: replaced the unreadable run-on "what the merge did" paragraph with
+           a per-fund TABLE: Fund split | Shares identified (distinct companies
+           seen through it) | Unidentified % (share of that fund we can't yet
+           see through) | % of all holdings (its weight in the portfolio).
+           Sorted largest-first, with a totals row.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -176,7 +189,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.16</div>
+<div class="vstamp">v1.18</div>
 
 <script>
 // ============================================================
@@ -421,7 +434,7 @@ function buildExposure(funds) {
   // whole portfolio (%). isFof = its holdings are sub-funds, not companies.
   // Returns the portfolio-weight it could NOT identify (a sub-fund we don't
   // hold yet, plus each fund's own undisclosed tail), so totals tie to 100%.
-  function expandFund(fisin, contribution, isFof) {
+  function expandFund(fisin, contribution, isFof, stat) {
     var holdings = FUNDS[fisin] || [];
     var listed = 0;     // sum of holdings' weight-in-fund (caps the remainder)
     var undisc = 0;
@@ -431,29 +444,35 @@ function buildExposure(funds) {
       var childWeight = (wInFund / 100) * contribution;
       if (hIsin && FUNDS[hIsin]) {
         // Holding is a sub-fund we hold — go one level deeper.
-        undisc += expandFund(hIsin, childWeight, FUND_OF_FUNDS.indexOf(hIsin) !== -1);
+        undisc += expandFund(hIsin, childWeight, FUND_OF_FUNDS.indexOf(hIsin) !== -1, stat);
       } else if (isFof) {
         // A sub-fund we don't hold yet, or a cash/bond bucket: its whole
         // weight is undisclosed — never shown as a fake "company" row.
         undisc += childWeight;
       } else {
         // Normal fund: this holding is a company.
-        touch(hName, hIsin, hTicker, false).viaFund += childWeight;
+        var e = touch(hName, hIsin, hTicker, false);
+        e.viaFund += childWeight;
+        if (stat) stat.idKeys.add(e);   // distinct companies surfaced via this fund
       }
     });
     undisc += ((100 - listed) / 100) * contribution;   // this fund's own tail
     return undisc;
   }
 
-  var splitFundsInfo = [];        // { name, weight } per split fund
+  var splitFundsInfo = [];        // per split fund: name, weight, identified, undiscPct
   var splitWeight = 0;
   var totalUndiscPortW = 0;
   SPLIT_FUNDS.forEach(function (fisin) {
     var fundLine = PORTFOLIO.find(function (r) { return r[1].trim() === fisin; });
     if (!fundLine) return;        // portfolio doesn't hold this fund — nothing to split
     var fundWeight = fundLine[2] * 100;
-    totalUndiscPortW += expandFund(fisin, fundWeight, FUND_OF_FUNDS.indexOf(fisin) !== -1);
-    splitFundsInfo.push({ name: fundLine[0], weight: fundWeight });
+    var stat = { name: fundLine[0], weight: fundWeight, idKeys: new Set() };
+    var undisc = expandFund(fisin, fundWeight, FUND_OF_FUNDS.indexOf(fisin) !== -1, stat);
+    totalUndiscPortW += undisc;
+    stat.identified = stat.idKeys.size;                                 // distinct companies via this fund
+    stat.undiscPct  = fundWeight > 0 ? (undisc / fundWeight) * 100 : 0; // unidentified share OF this fund
+    splitFundsInfo.push(stat);
     splitWeight += fundWeight;
   });
 
@@ -530,13 +549,23 @@ function render() {
   renderStatus();
   var built = buildExposure(state.funds);
   var rows = built.rows, totals = built.totals;
-  var maxTotal = Math.max.apply(null, rows.map(function (r) { return r.total; }));
   var shown = sortedRows(rows);
 
   var splitNames = totals.splitFundsInfo.map(function (f) { return f.name; }).join(" and ");
 
+  // Cumulative column: a running total of the column we're sorted on, but only
+  // when that makes sense — a numeric column, sorted high-to-low. Sorted by
+  // name/ISIN or ascending, a running total is meaningless, so we show "—".
+  var cumCol = state.sort.col, cumDir = state.sort.dir;
+  var cumActive = cumDir === "desc" &&
+    (cumCol === "total" || cumCol === "direct" || cumCol === "viaFund");
+  var cumRun = 0;
+
   var rowsHtml = shown.map(function (r) {
     var viaColor = r.isUndisc ? "var(--undisc)" : (r.isNotSplit ? "var(--mute)" : "var(--fund)");
+    var cumCell;
+    if (cumActive) { cumRun += (r[cumCol] || 0); cumCell = pct(cumRun); }
+    else { cumCell = "—"; }
     return '<tr class="' + (r.overlap ? "overlap" : "") + '">' +
       '<td>' + esc(r.name) + (r.overlap ? '<span class="tag">OVERLAP</span>' : "") + '</td>' +
       '<td class="isin">' + esc(r.isin) + '</td>' +
@@ -545,20 +574,41 @@ function render() {
       '<td class="num" style="color:' + (r.viaFund ? viaColor : "var(--line)") + '">' +
         (r.viaFund ? pct(r.viaFund) : "—") + '</td>' +
       '<td class="num" style="font-weight:600">' + pct(r.total) + '</td>' +
-      '<td><div class="bar">' +
-        '<span style="width:' + (r.direct / maxTotal) * 100 + '%;background:var(--share)"></span>' +
-        '<span style="width:' + (r.viaFund / maxTotal) * 100 + '%;background:' + viaColor + '"></span>' +
-      '</div></td></tr>';
+      '<td class="num" style="color:' + (cumActive ? "var(--mute)" : "var(--line)") + '">' +
+        cumCell + '</td></tr>';
   }).join("");
 
   var html =
     // Summary
     '<div class="panel"><h2>What the merge did</h2>' +
     '<div class="hint">' + totals.nSplit + ' fund' + (totals.nSplit === 1 ? "" : "s") + ' split (' +
-      totals.splitWeight.toFixed(2) + '% of the portfolio): ' + esc(splitNames) +
-      ' — broken into their underlying holdings, read live from the database. The other ' +
-      totals.nNotSplit + ' funds aren\'t split yet — they sit in their own honest bucket at the ' +
-      'bottom of the table, so the total still ties to 100%.</div>' +
+      totals.splitWeight.toFixed(2) + '% of the portfolio), broken into their underlying holdings ' +
+      'read live from the database. The other ' + totals.nNotSplit + ' aren\'t split yet (see the ' +
+      'buckets at the bottom of the table), so the total still ties to 100%.</div>' +
+    '<div class="tableBox"><table><thead><tr>' +
+      '<th>Fund split</th>' +
+      '<th class="num">Shares identified</th>' +
+      '<th class="num">Unidentified %</th>' +
+      '<th class="num">% of all holdings</th>' +
+    '</tr></thead><tbody>' +
+      totals.splitFundsInfo.slice().sort(function (a, b) { return b.weight - a.weight; })
+        .map(function (f) {
+          return '<tr>' +
+            '<td>' + esc(f.name) + '</td>' +
+            '<td class="num">' + f.identified + '</td>' +
+            '<td class="num" style="color:var(--undisc)">' + f.undiscPct.toFixed(1) + '%</td>' +
+            '<td class="num">' + f.weight.toFixed(2) + '%</td>' +
+          '</tr>';
+        }).join("") +
+    '</tbody><tfoot><tr>' +
+      '<td class="serif" style="font-size:13px">' + totals.nSplit + ' funds split</td>' +
+      '<td></td><td></td>' +
+      '<td class="num" style="font-weight:700">' + totals.splitWeight.toFixed(2) + '%</td>' +
+    '</tr></tfoot></table></div>' +
+    '<div class="hint" style="margin-top:6px"><strong>Shares identified</strong> = distinct companies seen ' +
+      'through that fund. <strong>Unidentified %</strong> = the share of that fund we can\'t yet see through ' +
+      '(no pipeline, or cash/bond buckets). <strong>% of all holdings</strong> = the fund\'s weight in the ' +
+      'whole portfolio.</div>' +
     '<div class="stats">' +
       '<div class="stat"><div class="statK">Exposure lines</div><div class="statV">' + totals.nLines + '</div></div>' +
       '<div class="stat"><div class="statK">Overlaps found</div><div class="statV" style="color:var(--accent)">' + totals.nOverlap + '</div></div>' +
@@ -588,7 +638,7 @@ function render() {
       sortTh("Direct", "direct", true) +
       sortTh("Via fund", "viaFund", true) +
       sortTh("Total", "total", true) +
-      '<th style="width:140px">Share of portfolio</th>' +
+      '<th class="num" style="width:120px">Cumulative</th>' +
     '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
     '<tfoot><tr>' +
       '<td class="serif" style="font-size:14px">Total — ties to 100%</td><td></td>' +
