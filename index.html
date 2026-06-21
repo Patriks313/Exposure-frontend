@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.15  (2026-06-18)
+     VERSION: v1.16  (2026-06-21)
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -72,6 +72,17 @@
            securities-portfolio page, and stores it. No ISIN/ticker in the file
            -> merges by cleaned name (like iShares). 33 holdings as of
            2025-12-31. (First Track-B / Swedish fund done.)
+
+     v1.16: FUND-OF-FUNDS look-through. CWMFS Utländska Aktier (LU1695631959)
+           is now split. It is stored in the DB as a fund whose holdings are
+           its 31 SUB-FUNDS (each linked by ISIN). The merge gained one
+           recursion step: a holding that is itself a loaded fund expands into
+           ITS companies, weights multiplied again. 14 of 31 sub-funds link
+           today (6 Xtrackers + 8 iShares); the rest fold into "undisclosed
+           inside split funds" until their pipelines exist. The loader now runs
+           a second wave to fetch each fund-of-funds' sub-funds (they are not
+           top-level portfolio holdings). FUND_OF_FUNDS lists which funds carry
+           sub-funds rather than companies.
 ============================================================ -->
 <html lang="en">
 <head>
@@ -165,7 +176,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.15</div>
+<div class="vstamp">v1.16</div>
 
 <script>
 // ============================================================
@@ -188,7 +199,16 @@ var SPLIT_FUNDS = [
   "IE00BH4GPZ28",   // SPDR S&P 500 Leaders (SPPY)
   "LU1940199711",  // Amundi MSCI Europe ESG Selection (uploaded, no fetch URL)
   "LU0476289540",  // Xtrackers MSCI Canada Screened (DWS, fetch by ISIN)
-  "LU2122479103"   // Carnegie Inv. Fund - Svenska Aktier (Carnegie, PDF report)
+  "LU2122479103",  // Carnegie Inv. Fund - Svenska Aktier (Carnegie, PDF report)
+  "LU1695631959"   // CWMFS Utländska Aktier (fund-of-funds — see FUND_OF_FUNDS)
+];
+
+// Funds whose HOLDINGS are themselves funds (sub-funds), not companies.
+// The merge expands these one extra level; the loader fetches their
+// sub-funds in a second wave. Add a fund's ISIN here if it is a
+// fund-of-funds.
+var FUND_OF_FUNDS = [
+  "LU1695631959"   // CWMFS Utländska Aktier
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
@@ -393,9 +413,38 @@ function buildExposure(funds) {
 
   // 2. Split each fund in SPLIT_FUNDS that the portfolio actually holds.
   //    Each holding's portfolio weight = (weight within fund) × (fund's weight).
-  //    Holdings match by ISIN when present, else by cleaned name (see touch()).
-  //    A fund whose holdings haven't loaded yet counts as fully undisclosed
-  //    for the moment, so the total still ties to 100% while loading.
+  //    A holding that is itself a loaded fund (a sub-fund of a fund-of-funds)
+  //    is expanded one level deeper — its companies' weights multiplied again.
+  //    Holdings match by ISIN, else ticker, else cleaned name (see touch()).
+
+  // Expand one fund into companies. contribution = this fund's share of the
+  // whole portfolio (%). isFof = its holdings are sub-funds, not companies.
+  // Returns the portfolio-weight it could NOT identify (a sub-fund we don't
+  // hold yet, plus each fund's own undisclosed tail), so totals tie to 100%.
+  function expandFund(fisin, contribution, isFof) {
+    var holdings = FUNDS[fisin] || [];
+    var listed = 0;     // sum of holdings' weight-in-fund (caps the remainder)
+    var undisc = 0;
+    holdings.forEach(function (h) {
+      var hIsin = h[0], hName = h[1], wInFund = h[2], hTicker = h[3] || "";
+      listed += wInFund;
+      var childWeight = (wInFund / 100) * contribution;
+      if (hIsin && FUNDS[hIsin]) {
+        // Holding is a sub-fund we hold — go one level deeper.
+        undisc += expandFund(hIsin, childWeight, FUND_OF_FUNDS.indexOf(hIsin) !== -1);
+      } else if (isFof) {
+        // A sub-fund we don't hold yet, or a cash/bond bucket: its whole
+        // weight is undisclosed — never shown as a fake "company" row.
+        undisc += childWeight;
+      } else {
+        // Normal fund: this holding is a company.
+        touch(hName, hIsin, hTicker, false).viaFund += childWeight;
+      }
+    });
+    undisc += ((100 - listed) / 100) * contribution;   // this fund's own tail
+    return undisc;
+  }
+
   var splitFundsInfo = [];        // { name, weight } per split fund
   var splitWeight = 0;
   var totalUndiscPortW = 0;
@@ -403,15 +452,7 @@ function buildExposure(funds) {
     var fundLine = PORTFOLIO.find(function (r) { return r[1].trim() === fisin; });
     if (!fundLine) return;        // portfolio doesn't hold this fund — nothing to split
     var fundWeight = fundLine[2] * 100;
-    var holdings = FUNDS[fisin] || [];
-    var disclosed = 0;
-    holdings.forEach(function (h) {
-      var hIsin = h[0], hName = h[1], wInFund = h[2], hTicker = h[3] || "";
-      disclosed += wInFund;
-      touch(hName, hIsin, hTicker, false).viaFund += (wInFund / 100) * fundWeight;
-    });
-    var undiscInFund = 100 - disclosed;
-    totalUndiscPortW += (undiscInFund / 100) * fundWeight;
+    totalUndiscPortW += expandFund(fisin, fundWeight, FUND_OF_FUNDS.indexOf(fisin) !== -1);
     splitFundsInfo.push({ name: fundLine[0], weight: fundWeight });
     splitWeight += fundWeight;
   });
@@ -584,19 +625,20 @@ function wireEvents() {
 }
 
 // --- Load every split fund's holdings live from the backend, then render ---
+// Two waves: (1) fetch every fund in SPLIT_FUNDS. (2) a fund-of-funds among
+// them holds SUB-FUNDS, not companies, and those sub-funds are usually NOT
+// top-level portfolio holdings — so fetch each referenced sub-fund too, so the
+// merge can expand it. Wave 2 repeats until no new sub-funds appear (handles a
+// sub-fund that is itself a fund-of-funds), bounded by a round cap.
 function loadFunds() {
-  var pending = SPLIT_FUNDS.length;
-  if (pending === 0) { state.allLoaded = true; render(); return; }
-
-  SPLIT_FUNDS.forEach(function (fisin) {
-    fetch(BACKEND + "/fund-json?isin=" + fisin)
+  function fetchOne(fisin) {
+    return fetch(BACKEND + "/fund-json?isin=" + fisin)
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (data.error) throw new Error(data.error);
-        // Carry each holding's ISIN and TICKER through. L&G has both (ISIN
-        // native, ticker resolved on the backend); iShares has only a ticker;
-        // direct holdings have only an ISIN. The merge tries ISIN, then ticker,
-        // then cleaned name (see touch()).
+        // Carry each holding's ISIN and TICKER through (merge tries ISIN, then
+        // ticker, then cleaned name — see touch()). For a fund-of-funds these
+        // "holdings" are sub-funds, whose ISIN links to the stored sub-fund.
         state.funds[fisin] = (data.holdings || []).map(function (h) {
           var isin = (h.isin && h.isin.trim()) ? h.isin.trim() : "";
           var ticker = (h.ticker && h.ticker.trim()) ? h.ticker.trim() : "";
@@ -604,14 +646,40 @@ function loadFunds() {
         });
       })
       .catch(function (e) {
+        // Mark as loaded-but-empty so it counts as fully undisclosed and is
+        // never re-requested in a later wave.
+        if (!state.funds[fisin]) state.funds[fisin] = [];
         state.loadErr = (state.loadErr ? state.loadErr + " " : "") +
           (fisin + ": " + (e.message || "could not load"));
-      })
-      .then(function () {
-        pending -= 1;
-        if (pending === 0) { state.allLoaded = true; }
-        render();
       });
+  }
+
+  // Sub-fund ISINs referenced by any loaded fund-of-funds, not yet fetched.
+  function pendingSubFunds() {
+    var want = {};
+    FUND_OF_FUNDS.forEach(function (fof) {
+      (state.funds[fof] || []).forEach(function (h) {
+        var hIsin = h[0];
+        if (hIsin && !state.funds[hIsin]) want[hIsin] = 1;
+      });
+    });
+    return Object.keys(want);
+  }
+
+  if (SPLIT_FUNDS.length === 0) { state.allLoaded = true; render(); return; }
+
+  // Wave 1: the top-level split funds.
+  Promise.all(SPLIT_FUNDS.map(fetchOne)).then(function () {
+    render();   // show what we have so far
+    var rounds = 0;
+    (function nextWave() {
+      var todo = pendingSubFunds();
+      if (todo.length === 0 || rounds >= 5) {
+        state.allLoaded = true; render(); return;
+      }
+      rounds += 1;
+      Promise.all(todo.map(fetchOne)).then(function () { render(); nextWave(); });
+    })();
   });
 }
 
