@@ -1,7 +1,10 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.19  (2026-06-22)
+     VERSION: v1.20  (2026-06-22)
+     v1.20: "In funds" column (count of your funds holding each company) +
+            click-to-open drill-down popup listing each fund and its % .
+            CWMFS attributed at top level (sub-funds roll up into it).
      v1.19: concentration chart — companies per 25% cumulative band,
             shown after the fund-split table, before the hidden-overlap callout.
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
@@ -163,6 +166,33 @@
   .concBar { width: 100%; max-width: 90px; background: var(--share); border-radius: 5px 5px 0 0; min-height: 2px; transition: height .2s; }
   .concNum { font-family: 'Fraunces', Georgia, serif; font-size: 20px; margin-bottom: 5px; }
   .concBand { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; color: var(--mute); margin-top: 7px; letter-spacing: 0.04em; }
+  .fundsCell { cursor: pointer; }
+  .fundsBadge {
+    display: inline-block; min-width: 20px; padding: 1px 7px; border-radius: 11px;
+    background: var(--fund); color: #fff; font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 11px; font-weight: 500; text-align: center;
+  }
+  .fundsCell:hover .fundsBadge { background: var(--accent); }
+  .popOverlay {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(28,26,23,0.45); align-items: center; justify-content: center; padding: 20px;
+  }
+  .popCard {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    max-width: 480px; width: 100%; max-height: 80vh; overflow-y: auto;
+    padding: 22px 24px; position: relative; box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  }
+  .popClose {
+    position: absolute; top: 12px; right: 14px; border: none; background: transparent;
+    font-size: 24px; line-height: 1; color: var(--mute); cursor: pointer; padding: 2px 6px;
+  }
+  .popClose:hover { color: var(--ink); }
+  .popCard h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; font-size: 20px; margin: 0 6px 2px 0; }
+  .popSub { color: var(--mute); font-size: 13px; margin-bottom: 14px; }
+  .popTable { width: 100%; border-collapse: collapse; }
+  .popTable th { font-size: 10px; }
+  .popTable td { font-size: 13px; padding: 7px 8px; }
+  .popFoot { font-size: 13px; color: var(--mute); margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
   tfoot td { border-top: 2px solid var(--ink); border-bottom: none; }
   .foot { font-size: 12px; color: var(--mute); margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
   .notice { font-size: 13px; color: var(--mute); }
@@ -196,7 +226,14 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.19</div>
+<div id="popOverlay" class="popOverlay">
+  <div class="popCard">
+    <button class="popClose" onclick="closeFundsPopup()" aria-label="Close">×</button>
+    <div id="popBody"></div>
+  </div>
+</div>
+
+<div class="vstamp">v1.20</div>
 
 <script>
 // ============================================================
@@ -441,7 +478,7 @@ function buildExposure(funds) {
   // whole portfolio (%). isFof = its holdings are sub-funds, not companies.
   // Returns the portfolio-weight it could NOT identify (a sub-fund we don't
   // hold yet, plus each fund's own undisclosed tail), so totals tie to 100%.
-  function expandFund(fisin, contribution, isFof, stat) {
+  function expandFund(fisin, contribution, isFof, stat, source) {
     var holdings = FUNDS[fisin] || [];
     var listed = 0;     // sum of holdings' weight-in-fund (caps the remainder)
     var undisc = 0;
@@ -451,7 +488,9 @@ function buildExposure(funds) {
       var childWeight = (wInFund / 100) * contribution;
       if (hIsin && FUNDS[hIsin]) {
         // Holding is a sub-fund we hold — go one level deeper.
-        undisc += expandFund(hIsin, childWeight, FUND_OF_FUNDS.indexOf(hIsin) !== -1, stat);
+        // Keep the SAME top-level source so a company inside CWMFS is
+        // attributed to CWMFS, not the deeper sub-fund.
+        undisc += expandFund(hIsin, childWeight, FUND_OF_FUNDS.indexOf(hIsin) !== -1, stat, source);
       } else if (isFof) {
         // A sub-fund we don't hold yet, or a cash/bond bucket: its whole
         // weight is undisclosed — never shown as a fake "company" row.
@@ -461,6 +500,12 @@ function buildExposure(funds) {
         var e = touch(hName, hIsin, hTicker, false);
         e.viaFund += childWeight;
         if (stat) stat.idKeys.add(e);   // distinct companies surfaced via this fund
+        // Record which top-level fund this exposure came from (for drill-down).
+        if (source) {
+          if (!e.sources) e.sources = {};
+          if (!e.sources[source.isin]) e.sources[source.isin] = { name: source.name, weight: 0 };
+          e.sources[source.isin].weight += childWeight;
+        }
       }
     });
     undisc += ((100 - listed) / 100) * contribution;   // this fund's own tail
@@ -475,7 +520,8 @@ function buildExposure(funds) {
     if (!fundLine) return;        // portfolio doesn't hold this fund — nothing to split
     var fundWeight = fundLine[2] * 100;
     var stat = { name: fundLine[0], weight: fundWeight, idKeys: new Set() };
-    var undisc = expandFund(fisin, fundWeight, FUND_OF_FUNDS.indexOf(fisin) !== -1, stat);
+    var undisc = expandFund(fisin, fundWeight, FUND_OF_FUNDS.indexOf(fisin) !== -1, stat,
+                            { isin: fisin, name: fundLine[0] });
     totalUndiscPortW += undisc;
     stat.identified = stat.idKeys.size;                                 // distinct companies via this fund
     stat.undiscPct  = fundWeight > 0 ? (undisc / fundWeight) * 100 : 0; // unidentified share OF this fund
@@ -485,16 +531,24 @@ function buildExposure(funds) {
 
   // 3. Finalise rows
   var list = entries.map(function (e) {
+    var sources = e.sources
+      ? Object.keys(e.sources).map(function (k) {
+          return { isin: k, name: e.sources[k].name, weight: e.sources[k].weight };
+        }).sort(function (a, b) { return b.weight - a.weight; })
+      : [];
     return {
       isin: e.isin, name: e.name, direct: e.direct, viaFund: e.viaFund,
-      total: e.direct + e.viaFund, overlap: e.direct > 0 && e.viaFund > 0
+      total: e.direct + e.viaFund, overlap: e.direct > 0 && e.viaFund > 0,
+      sources: sources, nFunds: sources.length
     };
   });
 
   list.push({ isin: "—", name: "Undisclosed (inside split funds)",
-    direct: 0, viaFund: totalUndiscPortW, total: totalUndiscPortW, overlap: false, isUndisc: true });
+    direct: 0, viaFund: totalUndiscPortW, total: totalUndiscPortW, overlap: false,
+    isUndisc: true, sources: [], nFunds: 0 });
   list.push({ isin: "—", name: "Funds not yet split (" + nNotSplit + " funds)",
-    direct: 0, viaFund: notSplitPortW, total: notSplitPortW, overlap: false, isNotSplit: true });
+    direct: 0, viaFund: notSplitPortW, total: notSplitPortW, overlap: false,
+    isNotSplit: true, sources: [], nFunds: 0 });
 
   var totals = {
     direct: list.reduce(function (s, r) { return s + r.direct; }, 0),
@@ -593,11 +647,15 @@ function render() {
     (cumCol === "total" || cumCol === "direct" || cumCol === "viaFund");
   var cumRun = 0;
 
-  var rowsHtml = shown.map(function (r) {
+  var rowsHtml = shown.map(function (r, idx) {
     var viaColor = r.isUndisc ? "var(--undisc)" : (r.isNotSplit ? "var(--mute)" : "var(--fund)");
     var cumCell;
     if (cumActive) { cumRun += (r[cumCol] || 0); cumCell = pct(cumRun); }
     else { cumCell = "—"; }
+    var fundsCell = (r.nFunds > 0)
+      ? '<td class="num fundsCell" data-row="' + idx + '" title="Show which funds hold this">' +
+          '<span class="fundsBadge">' + r.nFunds + '</span></td>'
+      : '<td class="num" style="color:var(--line)">—</td>';
     return '<tr class="' + (r.overlap ? "overlap" : "") + '">' +
       '<td>' + esc(r.name) + (r.overlap ? '<span class="tag">OVERLAP</span>' : "") + '</td>' +
       '<td class="isin">' + esc(r.isin) + '</td>' +
@@ -606,9 +664,11 @@ function render() {
       '<td class="num" style="color:' + (r.viaFund ? viaColor : "var(--line)") + '">' +
         (r.viaFund ? pct(r.viaFund) : "—") + '</td>' +
       '<td class="num" style="font-weight:600">' + pct(r.total) + '</td>' +
+      fundsCell +
       '<td class="num" style="color:' + (cumActive ? "var(--mute)" : "var(--line)") + '">' +
         cumCell + '</td></tr>';
   }).join("");
+  state.shownRows = shown;   // stash for the drill-down popup
 
   var html =
     // Summary
@@ -680,7 +740,8 @@ function render() {
     // Table
     '<div class="panel"><h2>Exposure by company</h2>' +
     '<div class="hint"><strong>Direct</strong> = held as a share. <strong>Via fund</strong> = look-through ' +
-      'from inside the split funds. <strong>Total</strong> = true exposure.</div>' +
+      'from inside the split funds. <strong>Total</strong> = true exposure. ' +
+      '<strong>In funds</strong> = how many of your funds hold this company — click the number to see which.</div>' +
     '<div style="margin-bottom:12px">' +
       '<button class="pill' + (state.view === "all" ? " active" : "") + '" data-view="all">All ' +
         rows.length + '</button>' +
@@ -693,13 +754,14 @@ function render() {
       sortTh("Direct", "direct", true) +
       sortTh("Via fund", "viaFund", true) +
       sortTh("Total", "total", true) +
+      sortTh("In funds", "nFunds", true) +
       '<th class="num" style="width:120px">Cumulative</th>' +
     '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
     '<tfoot><tr>' +
       '<td class="serif" style="font-size:14px">Total — ties to 100%</td><td></td>' +
       '<td class="num">' + totals.direct.toFixed(2) + '%</td>' +
       '<td class="num">' + totals.viaFund.toFixed(2) + '%</td>' +
-      '<td class="num" style="font-weight:700">' + totals.total.toFixed(2) + '%</td><td></td>' +
+      '<td class="num" style="font-weight:700">' + totals.total.toFixed(2) + '%</td><td></td><td></td>' +
     '</tr></tfoot></table></div>' +
     '<div class="foot">Two honest buckets sit at the bottom, kept separate on purpose. ' +
       '<strong>Undisclosed</strong> — the part of the split funds whose holdings weren\'t listed ' +
@@ -727,6 +789,35 @@ function wireEvents() {
       render();
     });
   });
+  document.querySelectorAll(".fundsCell").forEach(function (c) {
+    c.addEventListener("click", function () {
+      var idx = parseInt(c.getAttribute("data-row"), 10);
+      openFundsPopup((state.shownRows || [])[idx]);
+    });
+  });
+}
+
+// --- Drill-down popup: which funds hold this company ---
+function openFundsPopup(r) {
+  if (!r || !r.sources || !r.sources.length) return;
+  var rows = r.sources.map(function (s) {
+    return '<tr><td>' + esc(s.name) + '</td>' +
+      '<td class="num mono">' + pct(s.weight) + '</td></tr>';
+  }).join("");
+  var directLine = r.direct > 0
+    ? '<div class="popFoot">Plus held <strong>directly</strong> as a share: ' + pct(r.direct) +
+      '. True total exposure: <strong>' + pct(r.total) + '</strong>.</div>'
+    : '<div class="popFoot">True total exposure: <strong>' + pct(r.total) + '</strong>.</div>';
+  document.getElementById("popBody").innerHTML =
+    '<h3>' + esc(r.name) + '</h3>' +
+    '<div class="popSub">Held in ' + r.nFunds + ' of your fund' + (r.nFunds === 1 ? "" : "s") +
+      ' · ' + pct(r.viaFund) + ' via funds</div>' +
+    '<table class="popTable"><thead><tr><th>Fund</th><th class="num">% of portfolio</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>' + directLine;
+  document.getElementById("popOverlay").style.display = "flex";
+}
+function closeFundsPopup() {
+  document.getElementById("popOverlay").style.display = "none";
 }
 
 // --- Load every split fund's holdings live from the backend, then render ---
@@ -787,6 +878,14 @@ function loadFunds() {
     })();
   });
 }
+
+// Close the drill-down popup on background click or Escape.
+document.getElementById("popOverlay").addEventListener("click", function (e) {
+  if (e.target === this) closeFundsPopup();
+});
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") closeFundsPopup();
+});
 
 // Initial paint (loading state + table built on empty funds), then load.
 render();
