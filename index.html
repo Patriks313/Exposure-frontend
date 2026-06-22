@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.18  (2026-06-21)
+     VERSION: v1.19  (2026-06-22)
+     v1.19: concentration chart — companies per 25% cumulative band,
+            shown after the fund-split table, before the hidden-overlap callout.
      Repo: Patriks313/Exposure-frontend  ·  Served at exposure.greblats.com
      Bump this version on every change.
      v1.1: companies matched by CLEANED NAME (share-class stripped),
@@ -156,6 +158,11 @@
   }
   .bar { height: 12px; background: #ece8dd; border-radius: 3px; overflow: hidden; display: flex; }
   .bar span { display: block; height: 100%; }
+  .conc { display: flex; align-items: flex-end; gap: 16px; height: 200px; padding: 8px 4px 0; }
+  .concCol { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .concBar { width: 100%; max-width: 90px; background: var(--share); border-radius: 5px 5px 0 0; min-height: 2px; transition: height .2s; }
+  .concNum { font-family: 'Fraunces', Georgia, serif; font-size: 20px; margin-bottom: 5px; }
+  .concBand { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; color: var(--mute); margin-top: 7px; letter-spacing: 0.04em; }
   tfoot td { border-top: 2px solid var(--ink); border-bottom: none; }
   .foot { font-size: 12px; color: var(--mute); margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
   .notice { font-size: 13px; color: var(--mute); }
@@ -189,7 +196,7 @@
   <div id="content"></div>
 </div>
 
-<div class="vstamp">v1.18</div>
+<div class="vstamp">v1.19</div>
 
 <script>
 // ============================================================
@@ -517,6 +524,31 @@ function sortedRows(rows) {
   return main.concat(tail);
 }
 
+// --- Concentration bands: count companies per 25% cumulative band ---
+// Walk real companies sorted by total exposure, high to low. A company is
+// placed in the band its cumulative SITS IN before it is added, so the company
+// that crosses a 25% line stays in the lower band (e.g. Alfa Laval at 25.21%
+// is the last name in 0–25%). Buckets (undisclosed / not yet split) never count.
+function cumulativeBands(rows) {
+  var companies = rows
+    .filter(function (r) { return !r.isUndisc && !r.isNotSplit; })
+    .slice()
+    .sort(function (a, b) { return b.total - a.total; });
+  var bands = [0, 0, 0, 0];
+  var run = 0;
+  companies.forEach(function (r) {
+    var bi = Math.floor(run / 25);
+    if (bi > 3) bi = 3;
+    bands[bi]++;
+    run += r.total;
+  });
+  return {
+    bands: bands,
+    labels: ["0–25%", "25–50%", "50–75%", "75–100%"],
+    max: Math.max(1, bands[0], bands[1], bands[2], bands[3])
+  };
+}
+
 // --- Render ---
 function pct(n) { return n.toFixed(3) + "%"; }
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -615,6 +647,29 @@ function render() {
       '<div class="stat"><div class="statK">Seen through</div><div class="statV" style="color:var(--share)">' + (totals.total - totals.notSplit).toFixed(1) + '%</div></div>' +
       '<div class="stat"><div class="statK">Funds not yet split</div><div class="statV" style="color:var(--mute)">' + totals.notSplit.toFixed(1) + '%</div></div>' +
     '</div></div>' +
+
+    // Concentration chart — companies per 25% cumulative band
+    (function () {
+      var cb = cumulativeBands(rows);
+      return '<div class="panel"><h2>How concentrated is the portfolio?</h2>' +
+        '<div class="hint">Companies ranked by true total exposure, then counted into ' +
+        '25% slices of the whole portfolio. Fewer companies in the first slice means more ' +
+        'concentration at the top. Upper slices may be sparse where exposure sits in ' +
+        'undisclosed or not-yet-split funds.</div>' +
+        '<div class="conc">' +
+          cb.bands.map(function (n, i) {
+            var h = (n / cb.max) * 100;
+            return '<div class="concCol">' +
+              '<div class="concNum">' + n + '</div>' +
+              '<div class="concBar" style="height:' + h + '%"></div>' +
+              '<div class="concBand">' + cb.labels[i] + '</div>' +
+            '</div>';
+          }).join("") +
+        '</div>' +
+        '<div class="hint" style="margin-top:14px">Each bar = the number of distinct ' +
+        'companies whose combined exposure fills that quarter of the portfolio.</div>' +
+      '</div>';
+    })() +
 
     // Overlap callout
     '<div class="panel overlapcall"><h2>The hidden overlap</h2>' +
