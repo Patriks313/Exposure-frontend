@@ -1,7 +1,11 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.20  (2026-06-22)
+     VERSION: v1.21  (2026-06-23)
+     v1.21: privacy — the public page now shows a RANDOMISED demo portfolio.
+            "Load my file" reads an .xlsx in the browser only (never uploaded);
+            optional "remember on this device" saves it to localStorage only;
+            "Back to demo / forget" clears it. No backend change.
      v1.20: "In funds" column (count of your funds holding each company) +
             click-to-open drill-down popup listing each fund and its % .
             CWMFS attributed at top level (sub-funds roll up into it).
@@ -210,6 +214,20 @@
     color: var(--mute); background: var(--card); border: 1px solid var(--line);
     border-radius: 6px; padding: 3px 8px; letter-spacing: 0.06em;
   }
+  .dataBar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 13px 16px; margin-bottom: 22px;
+  }
+  .dataState { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; letter-spacing: 0.04em; color: var(--mute); }
+  .dataState b { color: var(--share); font-weight: 600; }
+  .dataState.live b { color: var(--accent); }
+  .loadBtn { cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 500; border-radius: 7px; padding: 7px 14px; }
+  .loadBtn:hover { filter: brightness(1.08); }
+  .rememberWrap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); cursor: pointer; }
+  .resetBtn { cursor: pointer; border: 1px solid var(--line); background: transparent; color: var(--ink); font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; border-radius: 7px; padding: 7px 12px; }
+  .resetBtn:hover { border-color: var(--accent); color: var(--accent); }
+  .privacyNote { flex-basis: 100%; font-size: 12px; color: var(--mute); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -220,6 +238,16 @@
     Funds are replaced by their underlying holdings; shares and cash pass through.
     Everything is then summed by company — so a company held directly <em>and</em> inside a
     fund (even as a different share class) shows as one true number.
+  </div>
+
+  <div class="dataBar">
+    <span id="dataState" class="dataState">Showing <b>demo data</b> (randomised, not a real portfolio)</span>
+    <label class="loadBtn">Load my file
+      <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
+    </label>
+    <label class="rememberWrap"><input type="checkbox" id="rememberChk"> Remember on this device</label>
+    <button id="resetBtn" class="resetBtn" hidden>Back to demo / forget</button>
+    <div class="privacyNote">Your file is read inside your browser only — never uploaded, never stored on any server. Only Name, ISIN and Share are read; any value column is ignored.</div>
   </div>
 
   <div id="status"></div>
@@ -233,8 +261,9 @@
   </div>
 </div>
 
-<div class="vstamp">v1.20</div>
+<div class="vstamp">v1.21</div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 // ============================================================
 // Exposure roll-up — real web page (GitHub Pages frontend)
@@ -269,62 +298,90 @@ var FUND_OF_FUNDS = [
 ];
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
-var PORTFOLIO = [
-  ["ABB Ltd","CH0012221716",0.00795850],["Abbvie","US00287Y1091",0.00241232],
-  ["Addtech B","SE0014781795",0.00376473],["Advanced Micro Devices","US0079031078",0.00298770],
-  ["Aker Solutions","NO0010716582",0.00482539],["Alfa Laval","SE0000695876",0.00292782],
-  ["Alibaba Group Holding Ltd","US01609W1027",0.00159234],["ALK-Abelló B","DK0061802139",0.00413273],
-  ["Alphabet Inc- Class A","US02079K3059",0.00754625],["Amazon.com","US0231351067",0.00609869],
-  ["Ambu","DK0060946788",0.00219815],["Ameresco","US02361E1082",0.00257173],
-  ["Amphenol Corp","US0320951017",0.00175823],["Amundi MSCI Europe ESG Selection UCITS ETF","LU1940199711",0.02807822],
-  ["AQ Group","SE0022062196",0.00356490],["Arcadis","NL0006237562",0.00270748],
-  ["Array Technologies","US04271T1007",0.00212255],["ASML Holding","NL0010273215",0.00177487],
-  ["Atlas Copco B","SE0017486897",0.01089804],["ATS Corporation","CA00217Y1043",0.00226382],
-  ["Axon Enterprise","US05464C1018",0.00123340],["Bank of America Corp","US0605051046",0.00124139],
-  ["Beijer Ref B","SE0015949748",0.00366062],["Bonesupport Holding","SE0009858152",0.00469819],
-  ["BROOKFIELD RENEWABLE CORP","CA11285B1085",0.00207881],["Bureau Veritas","FR0006174348",0.00181393],
-  ["BYD Company","CNE100000296",0.00214912],["Carlsberg B","DK0010181759",0.00188797],
-  ["CATL","CNE100006WS8",0.00205269],["Celsius Holdings","US15118V2079",0.00203715],
-  ["Charles Schwab Corp (The)","US8085131055",0.00259253],["CIF SVENSKA AKTIER IA0","LU2122479103",0.20094526],
-  ["Core & Main Inc","US21874C1027",0.00206426],["CWMFS UTLÄNDSKA AKTIER IA0","LU1695631959",0.14659235],
-  ["Danske Bank","DK0010274414",0.00967970],["Deckers Outdoor Corp","US2435371073",0.00318123],
-  ["DNB Bank ASA","NO0010161896",0.00541495],["DSV","DK0060079531",0.00440710],
-  ["EDP","PTEDP0AM0009",0.00186439],["Epam Systems","US29414B1044",0.00158595],
-  ["Eqt","SE0012853455",0.00590828],["Ericsson B","SE0000108656",0.00437549],
-  ["Expedia Group","US30212P3038",0.00114244],["Galderma Group","CH1335392721",0.00194035],
-  ["Hannon Armstrong Capital","US41068X1000",0.00315755],["Hexagon B","SE0015961909",0.00385199],
-  ["Hitachi,Ltd","JP3788600009",0.00231008],["HMS Networks","SE0009997018",0.00487833],
-  ["Indutrade","SE0001515552",0.00141453],["Infineon AG","DE0006231004",0.00645551],
-  ["Inpost S.A.","LU2290522684",0.00223526],["Invesco S&P 500 ESG UCITS ETF Acc USD","IE00BKS7L097",0.06441414],
-  ["Invisio","SE0001200015",0.00305508],["ISHARES MSCI JAPAN ESG SCREENED UCITS","IE00BFNM3L97",0.00918246],
-  ["iShares MSCI USA ESG Enhanced UCITS ETF","IE00BHZPJ890",0.05556582],["Kinaxis Inc","CA49448Q1090",0.00186087],
-  ["Kongsberg Gruppen","NO0013536151",0.00374162],["L&G Europe ESG Exclusions Paris Aligned UCITS ETF","IE00BKLTRN76",0.02572967],
-  ["L&G Japan Equity UCITS ETF USD","IE00BFXR5T61",0.01891705],["L&G US ESG Exclusions Paris Aligned UCITS ETF","IE00BKLWY790",0.05971129],
-  ["Lagercrantz Group B","SE0014990966",0.00678907],["Lifco B","SE0015949201",0.00408668],
-  ["Lundin Mining Corp","CA5503721063",0.00391313],["Marvell Technology","US5738741041",0.00240480],
-  ["MICROSOFT CORPORATION","US5949181045",0.01092267],["Mirion Technologies","US60471A1016",0.00168085],
-  ["Munters Group","SE0009806607",0.00333013],["Mycronic","SE0025158629",0.00428236],
-  ["NEXANS","FR0000044448",0.00370024],["Nextera Energy Partners LP","US65341B1061",0.00166167],
-  ["NKT","DK0010287663",0.00579392],["Nokia Oyj","FI0009000681",0.01108104],
-  ["Nordea Bank Abp","FI4000297767",0.00619047],["Novo Nordisk B","DK0062498333",0.01969484],
-  ["NVIDIA CORP","US67066G1040",0.00619246],["Octave Intelligence","SE0028329433",0.00000000],
-  ["Ormat Technologies Inc","US6866881021",0.00135042],["Parsons","US70202L1026",0.00348963],
-  ["Per Aarsleff Holding B","DK0060700516",0.00316037],["PRUDENTIAL PLC ORD 5P","GB0007099541",0.00148983],
-  ["Pure Storage","US74624M1027",0.00264701],["QUALCOMM INC","US7475251036",0.00266350],
-  ["Ringkjøbing Landbobank","DK0060854669",0.00681168],["SAAB B","SE0021921269",0.00489765],
-  ["Sampo Oyj A","FI4000552500",0.00423622],["Samsung Electronics","US7960508882",0.00254774],
-  ["SAP AG","DE0007164600",0.00152287],["SERVICENOW INC","US81762P1021",0.00190365],
-  ["Shoals Technologies Group","US82489W1071",0.00299315],["SIEGFRIED N","CH1429326825",0.00169034],
-  ["SIEMENS AG","DE0007236101",0.00222085],["SNOWFLAKE CL A","US8334451098",0.00256777],
-  ["SPDR S&P 500 ESG Leaders UCITS ETF","IE00BH4GPZ28",0.01928569],["SSAB A","SE0000171100",0.00141788],
-  ["STANTEC INC","CA85472N1096",0.00175401],["Sumitomo Metal Mining Co","JP3402600005",0.00129467],
-  ["Synopsys Inc","US8716071076",0.00335344],["TAIWAN SEMICONDUCTOR MANUFACT ADR","US8740391003",0.00452401],
-  ["THERMO FISHER SCIENTIFIC ORD","US8835561023",0.00358101],["TransUnion","US89400J1079",0.00150521],
-  ["UnitedHealth Group Inc","US91324P1021",0.00413763],["Vestas Wind Systems","DK0061539921",0.00606753],
-  ["VISA","US92826C8394",0.00245205],["Wärtsilä Oyj Abp","FI0009003727",0.00639306],
-  ["Xtrackers MSCI Canada Screened UCITS ETF","LU0476289540",0.01429296],["Xylem Inc","US98419M1009",0.00193810],
-  ["SEK","",0.00687246]
+// --- DEMO data shown publicly (randomised — NOT a real portfolio). ---
+var DUMMY_PORTFOLIO = [
+  ["Ericsson B","LU1695631959",0.08219624],
+  ["Invesco S&P 500 ESG UCITS ETF Acc USD","IE00BKS7L097",0.03533823],
+  ["L&G US ESG Exclusions Paris Aligned UCITS ETF","IE00BKLWY790",0.03222865],
+  ["MICROSOFT CORPORATION","US5949181045",0.00369846],
+  ["ISHARES MSCI JAPAN ESG SCREENED UCITS","IE00BFNM3L97",0.00360692],
+  ["ABB Ltd","CH0012221716",0.00218994],
+  ["Nordea Bank Abp","FI4000297767",0.00209194],
+  ["Alphabet Inc- Class A","US02079K3059",0.00204495],
+  ["Ringkjøbing Landbobank","DK0060854669",0.00194707],
+  ["Lifco B","SE0015949201",0.00190376],
+  ["Ericsson B","SE0000108656",0.00189593],
+  ["THERMO FISHER SCIENTIFIC ORD","US8835561023",0.00189545],
+  ["Bonesupport Holding","SE0009858152",0.00187954],
+  ["Beijer Ref B","SE0015949748",0.08219624],
+  ["Kongsberg Gruppen","NO0013536151",0.03533823],
+  ["NEXANS","FR0000044448",0.03222865],
+  ["Lundin Mining Corp","CA5503721063",0.00186671],
+  ["SNOWFLAKE CL A","US8334451098",0.00182103],
+  ["Addtech B","SE0014781795",0.00177683],
+  ["Hexagon B","SE0015961909",0.00176955],
+  ["AQ Group","SE0022062196",0.00174599],
+  ["Parsons","US70202L1026",0.00170353],
+  ["Per Aarsleff Holding B","DK0060700516",0.00167718],
+  ["Carlsberg B","DK0010181759",0.00167403],
+  ["Deckers Outdoor Corp","US2435371073",0.00165512],
+  ["Hannon Armstrong Capital","US41068X1000",0.00155283],
+  ["Broadcom","US11135F1012",0.00150879],
+  ["Synopsys Inc","US8716071076",0.00150016],
+  ["Alfa Laval","SE0000695876",0.00155283],
+  ["Shoals Technologies Group","US82489W1071",0.00150879],
+  ["Samsung Electronics","US7960508882",0.00150016],
+  ["Munters Group","SE0009806607",0.00149765],
+  ["Pure Storage","US74624M1027",0.00148639],
+  ["Charles Schwab Corp (The)","US8085131055",0.00147179],
+  ["Abbvie","US00287Y1091",0.00144222],
+  ["Arcadis","NL0006237562",0.00150879],
+  ["Advanced Micro Devices","US0079031078",0.00189545],
+  ["VISA","US92826C8394",0.00187954],
+  ["ATS Corporation","CA00217Y1043",0.08219624],
+  ["Ameresco","US02361E1082",0.03533823],
+  ["Mycronic","SE0025158629",0.03222865],
+  ["CATL","CNE100006WS8",0.00150879],
+  ["Inpost S.A.","LU2290522684",0.00150016],
+  ["Hitachi,Ltd","JP3788600009",0.00149765],
+  ["SIEMENS AG","DE0007236101",0.00148639],
+  ["Amphenol Corp","US0320951017",0.00147179],
+  ["Demant","DK0060738599",0.00144222],
+  ["BROOKFIELD RENEWABLE CORP","CA11285B1085",0.00150879],
+  ["Galderma Group","CH1335392721",0.00189545],
+  ["Array Technologies","US04271T1007",0.00187954],
+  ["Core & Main Inc","US21874C1027",0.08219624],
+  ["Xylem Inc","US98419M1009",0.03533823],
+  ["Celsius Holdings","US15118V2079",0.03222865],
+  ["ASML Holding","NL0010273215",0.00186671],
+  ["BYD Company","CNE100000296",0.00182103],
+  ["EDP","PTEDP0AM0009",0.00177683],
+  ["SERVICENOW INC","US81762P1021",0.00176955],
+  ["QUALCOMM INC","US7475251036",0.00099196],
+  ["Kinaxis Inc","CA49448Q1090",0.00097411],
+  ["Mirion Technologies","US60471A1016",0.00144222],
+  ["Biomar DC","DK0064867972",0.00150879],
+  ["SAP AG","DE0007164600",0.00189545],
+  ["Bureau Veritas","FR0006174348",0.00187954],
+  ["Nextera Energy Partners LP","US65341B1061",0.08219624],
+  ["STANTEC INC","CA85472N1096",0.03533823],
+  ["SSAB A","SE0000171100",0.03222865],
+  ["SIEGFRIED N","CH1429326825",0.00150879],
+  ["TransUnion","US89400J1079",0.00077163],
+  ["Bank of America Corp","US0605051046",0.00076418],
+  ["Axon Enterprise","US05464C1018",0.00189545],
+  ["PRUDENTIAL PLC ORD 5P","GB0007099541",0.00187954],
+  ["Expedia Group","US30212P3038",0.08219624],
+  ["Ormat Technologies Inc","US6866881021",0.03533823],
+  ["Alibaba Group Holding Ltd","US01609W1027",0.03222865],
+  ["Indutrade","SE0001515552",0.00150879],
+  ["Sumitomo Metal Mining Co","JP3402600005",0.00077163],
+  ["Epam Systems","US29414B1044",0.00076418],
+  ["Octave Intelligence","SE0028329433",0.00035629]
 ];
+// The active portfolio. Starts as the demo; replaced IN-BROWSER when the user
+// loads their own file (nothing is ever sent to a server). Handlers below.
+var PORTFOLIO = DUMMY_PORTFOLIO;
 
 // --- Type detection (same logic as ISIN Classification) ---
 var FUND_KW = ["ETF", "UCITS", "AKTIER IA"];
@@ -886,6 +943,115 @@ document.getElementById("popOverlay").addEventListener("click", function (e) {
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape") closeFundsPopup();
 });
+
+// ============================================================
+// v1.21 — Load-your-own-file (in-browser only) + optional remember.
+// The demo list above is what the public sees. A loaded file replaces
+// PORTFOLIO in memory and re-renders; nothing is sent to any server.
+// "Remember on this device" stores the parsed list in this browser's
+// localStorage only. Only Name/ISIN/Share are read; no value is ever read.
+// ============================================================
+var STORAGE_KEY = "exposure_portfolio_v1";
+var usingUserData = false;
+
+function setDataState(isUser) {
+  usingUserData = isUser;
+  var el = document.getElementById("dataState");
+  var reset = document.getElementById("resetBtn");
+  if (isUser) {
+    el.className = "dataState live";
+    el.innerHTML = "Showing <b>your data</b> (this browser only)";
+    reset.hidden = false;
+  } else {
+    el.className = "dataState";
+    el.innerHTML = "Showing <b>demo data</b> (randomised, not a real portfolio)";
+    reset.hidden = true;
+  }
+}
+
+// Parse an .xlsx/.xls into the [name, isin, weight] rows the app uses.
+// Columns are found by header (Name / ISIN / Share) so a stray value column
+// is never read. Share may be a fraction (0.0123) or a percent (1.23).
+function rowsFromWorkbook(wb) {
+  var sheetName = wb.SheetNames.indexOf("Holdings") >= 0 ? "Holdings" : wb.SheetNames[0];
+  var grid = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, blankrows: false });
+  if (!grid.length) return [];
+  var head = grid[0].map(function (c) { return String(c == null ? "" : c).trim().toLowerCase(); });
+  function col(names) { for (var i = 0; i < head.length; i++) { if (names.indexOf(head[i]) >= 0) return i; } return -1; }
+  var iName = col(["name", "namn", "holding"]);
+  var iIsin = col(["isin"]);
+  var iShare = col(["share", "andel", "weight", "vikt"]);
+  if (iName < 0 || iShare < 0) throw new Error("missing Name/Share columns");
+  var sum = 0, parsed = [];
+  for (var r = 1; r < grid.length; r++) {
+    var row = grid[r]; if (!row) continue;
+    var nm = row[iName]; if (nm == null || String(nm).trim() === "") continue;
+    var isin = (iIsin >= 0 && row[iIsin] != null) ? String(row[iIsin]).trim() : "";
+    var w = parseFloat(row[iShare]); if (isNaN(w)) w = 0;
+    parsed.push([String(nm).trim(), isin, w]); sum += w;
+  }
+  if (sum > 2) { parsed = parsed.map(function (p) { return [p[0], p[1], p[2] / 100]; }); }
+  return parsed;
+}
+
+function applyPortfolio(rows, remember) {
+  PORTFOLIO = rows;
+  setDataState(true);
+  if (remember) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch (e) {} }
+  render();
+}
+
+function backToDemo() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  PORTFOLIO = DUMMY_PORTFOLIO;
+  document.getElementById("rememberChk").checked = false;
+  document.getElementById("fileInput").value = "";
+  setDataState(false);
+  render();
+}
+
+document.getElementById("fileInput").addEventListener("change", function (e) {
+  var file = e.target.files && e.target.files[0];
+  if (!file) return;
+  var remember = document.getElementById("rememberChk").checked;
+  var reader = new FileReader();
+  reader.onload = function (ev) {
+    try {
+      var wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+      var rows = rowsFromWorkbook(wb);
+      if (!rows.length) { alert("No holdings found in that file."); return; }
+      applyPortfolio(rows, remember);
+    } catch (err) {
+      alert("Sorry — couldn't read that file. Expected columns: Name, ISIN, Share.");
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+document.getElementById("rememberChk").addEventListener("change", function (e) {
+  if (!usingUserData) return;
+  if (e.target.checked) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(PORTFOLIO)); } catch (er) {} }
+  else { try { localStorage.removeItem(STORAGE_KEY); } catch (er) {} }
+});
+
+document.getElementById("resetBtn").addEventListener("click", backToDemo);
+
+// On load: if this browser has a remembered portfolio, use it; else demo.
+(function restoreSaved() {
+  try {
+    var saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      var rows = JSON.parse(saved);
+      if (rows && rows.length) {
+        PORTFOLIO = rows;
+        document.getElementById("rememberChk").checked = true;
+        setDataState(true);
+        return;
+      }
+    }
+  } catch (e) {}
+  setDataState(false);
+})();
 
 // Initial paint (loading state + table built on empty funds), then load.
 render();
