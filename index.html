@@ -1,7 +1,14 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.21  (2026-06-23)
+     VERSION: v1.22  (2026-06-24)
+     v1.22: company merge — one row per company even across share classes,
+            listings and name spellings. Cleaner now drops AB/AS/aktiebolag/
+            "shares"/listing-cities; a curated map folds genuine share-class
+            ISINs (Atlas Copco A+B, Lindt, Henkel, Air Liquide, L'Oréal) and a
+            couple of truncated names (SEB, SCA). Also fixes cross-listing
+            TICKER collisions (e.g. Heineken vs HEICO) that fused different
+            companies. Pure reference data, no weights/values (privacy intact).
      v1.21: privacy — the public page now shows a RANDOMISED demo portfolio.
             "Load my file" reads an .xlsx in the browser only (never uploaded);
             optional "remember on this device" saves it to localStorage only;
@@ -261,7 +268,7 @@
   </div>
 </div>
 
-<div class="vstamp">v1.21</div>
+<div class="vstamp">v1.22</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
@@ -296,6 +303,29 @@ var SPLIT_FUNDS = [
 var FUND_OF_FUNDS = [
   "LU1695631959"   // CWMFS Utländska Aktier
 ];
+
+// --- CURATED COMPANY MERGE MAP (v1.22) — layer 2, AUTHORITATIVE ---------------
+// Pure public reference data (ISINs + name strings, NO weights — §0 safe).
+// Forces merges the automatic name-cleaner cannot safely make on its own:
+// genuinely different ISINs that are ONE company (share classes / loyalty /
+// regular+loyalty), and a couple of truncated name strings that carry no ISIN.
+// Each ISIN below is mapped to ONE canonical ISIN so all lines sum into a
+// single company row. Verified against real holdings 2026-06-24.
+var CANON_ISIN = {
+  "SE0017486897": "SE0017486889",  // Atlas Copco  B  -> A
+  "CH0010570767": "CH0010570759",  // Lindt        PC -> REG
+  "DE0006048432": "DE0006048408",  // Henkel       pref -> ordinary
+  "FR0014010OO5": "FR0000120073",  // Air Liquide  loyalty -> SA
+  "FR0011149590": "FR0000120321",  // L'Oréal      loyalty -> regular
+  "FR0014013RC7": "FR0000120321"   // L'Oréal      loyalty 2028 -> regular
+};
+// Name-key aliases for lines that carry NO ISIN and whose source strings are
+// truncated differently (so the cleaner alone can't unify them). Keys/values
+// are POST-normalise() strings.
+var CANON_NAME = {
+  "skandinaviska enskilda ban": "skandinaviska enskilda banken",  // SEB A (truncated)
+  "svenska cellulosa sca": "svenska cellulosa"                    // SCA-B
+};
 
 // --- SOURCE: Data input table (real weights, fraction of portfolio) ---
 // --- DEMO data shown publicly (randomised — NOT a real portfolio). ---
@@ -427,7 +457,13 @@ var NAME_DROP = {};
 ['inc','corp','corporation','co','company','companies','ag','plc','ltd','limited','oyj',
  'abp','asa','sa','nv','se','spa','holding','holdings','group','ord','adr','the','n',
  'class','cl','and','of','reit','del','new',
- 'in','cor','shs','sh','stk','sbi','clas'].forEach(function (w) { NAME_DROP[w] = 1; });
+ 'in','cor','shs','sh','stk','sbi','clas',
+ // v1.22: company-form + share-class + listing-tag noise that split one company
+ // into several rows (Bonesupport/Hexagon/Investor/Atlas Copco "AB", NKT "AS",
+ // Essity "aktiebolag", SKF/Swedbank "shares", DSM/Nordea listing cities,
+ // Ericsson "telefonaktiebolaget"/"lm", preferred-share markers).
+ 'ab','as','aktiebolag','vor','pfd','pref','prefd','shares','share',
+ 'stockholm','cph','copenhagen','amsterdam','telefonaktiebolaget','lm'].forEach(function (w) { NAME_DROP[w] = 1; });
 
 function normalise(name) {
   if (!name) return "";
@@ -437,6 +473,7 @@ function normalise(name) {
   s = s.replace(/\bnpv\b/g, " ");               // "no par value"
   s = s.replace(/\bcommon stock\b/g, " ");
   s = s.replace(/\bcom\b/g, " ");               // "common stock" marker
+  s = s.replace(/\ba\/s\b/g, " ");              // v1.22: Danish "A/S" as a unit (before slash->space)
   s = s.replace(/[.,'’"\-\/&+()]/g, " ");       // punctuation incl. parentheses ("(The)")
   var toks = s.split(/\s+/).filter(Boolean)
     .map(function (t) { return NAME_ABBR[t] || t; })   // expand abbreviations
@@ -448,6 +485,15 @@ function normalise(name) {
     })
     .filter(function (t) { return t.length > 1; });    // drop single-letter tokens (share-class A/B/C)
   return toks.join(" ").trim();
+}
+
+// v1.22: do two cleaned names share at least one word? Used to corroborate a
+// ticker match so cross-listing ticker collisions can't fuse two companies.
+function sharesWord(a, b) {
+  if (!a || !b) return true;                 // nothing to contradict -> allow
+  var A = {};
+  a.split(" ").forEach(function (t) { if (t) A[t] = 1; });
+  return b.split(" ").some(function (t) { return t && A[t]; });
 }
 
 // --- State ---
@@ -488,18 +534,26 @@ function buildExposure(funds) {
       return cashEntry;
     }
     var nm = normalise(name);
+    if (CANON_NAME[nm]) nm = CANON_NAME[nm];                 // v1.22: curated name alias
     var ik = (displayIsin && displayIsin.trim()) ? displayIsin.trim() : "";
+    if (ik && CANON_ISIN[ik]) ik = CANON_ISIN[ik];           // v1.22: curated ISIN alias (share classes etc.)
     var tk = (ticker && ticker.trim()) ? ticker.trim() : "";
     var entry = null;
     // 1. Strong match: same ISIN (only holdings that actually carry one).
     if (ik && byIsin.has(ik)) entry = byIsin.get(ik);
     // 2. Ticker match: bridges iShares (ticker, no ISIN) and L&G (now both).
-    if (!entry && tk && byTicker.has(tk)) entry = byTicker.get(tk);
+    //    v1.22 GUARD: only accept if the names share a word — stops cross-listing
+    //    ticker collisions (Heineken HEIA vs HEICO, Tesco TSCO vs Tractor Supply,
+    //    Admiral ADM vs Archer-Daniels, etc.) from fusing different companies.
+    if (!entry && tk && byTicker.has(tk)) {
+      var cand = byTicker.get(tk);
+      if (sharesWord(nm, cand.nm)) entry = cand;
+    }
     // 3. Fallback match: same cleaned company name.
     if (!entry && nm && byName.has(nm)) entry = byName.get(nm);
     // 4. Otherwise it's a new company.
     if (!entry) {
-      entry = { isin: ik || "—", name: name, direct: 0, viaFund: 0 };
+      entry = { isin: ik || "—", name: name, nm: nm, direct: 0, viaFund: 0 };
       entries.push(entry);
     }
     // Register this holding's identifiers so later holdings find this entry.
