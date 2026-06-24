@@ -1,7 +1,12 @@
 <!DOCTYPE html>
 <!-- ============================================================
      Exposure Roll-up — frontend page
-     VERSION: v1.22  (2026-06-24)
+     VERSION: v1.23  (2026-06-24)
+     v1.23: click a fund name in "What the merge did" to see the shares inside
+            it (mirror of the company drill-down); footer reconciles identified
+            + unidentified to the fund's full %. Plus CSV export buttons on the
+            main table and inside each fund popup (percentages only, privacy
+            intact; downloads in-browser, nothing sent to a server).
      v1.22: company merge — one row per company even across share classes,
             listings and name spellings. Cleaner now drops AB/AS/aktiebolag/
             "shares"/listing-cities; a curated map folds genuine share-class
@@ -184,6 +189,8 @@
     font-size: 11px; font-weight: 500; text-align: center;
   }
   .fundsCell:hover .fundsBadge { background: var(--accent); }
+  .fundLink { cursor: pointer; color: var(--fund); border-bottom: 1px dotted var(--fund); }
+  .fundLink:hover { color: var(--accent); border-bottom-color: var(--accent); }
   .popOverlay {
     display: none; position: fixed; inset: 0; z-index: 100;
     background: rgba(28,26,23,0.45); align-items: center; justify-content: center; padding: 20px;
@@ -268,7 +275,7 @@
   </div>
 </div>
 
-<div class="vstamp">v1.22</div>
+<div class="vstamp">v1.23</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
@@ -630,7 +637,7 @@ function buildExposure(funds) {
     var fundLine = PORTFOLIO.find(function (r) { return r[1].trim() === fisin; });
     if (!fundLine) return;        // portfolio doesn't hold this fund — nothing to split
     var fundWeight = fundLine[2] * 100;
-    var stat = { name: fundLine[0], weight: fundWeight, idKeys: new Set() };
+    var stat = { isin: fisin, name: fundLine[0], weight: fundWeight, idKeys: new Set() };
     var undisc = expandFund(fisin, fundWeight, FUND_OF_FUNDS.indexOf(fisin) !== -1, stat,
                             { isin: fisin, name: fundLine[0] });
     totalUndiscPortW += undisc;
@@ -779,7 +786,9 @@ function render() {
       '<td class="num" style="color:' + (cumActive ? "var(--mute)" : "var(--line)") + '">' +
         cumCell + '</td></tr>';
   }).join("");
-  state.shownRows = shown;   // stash for the drill-down popup
+  state.shownRows = shown;   // stash for the company drill-down popup
+  state.allRows = rows;      // full unfiltered rows (for fund popup + CSV export)
+  state.splitInfo = totals.splitFundsInfo;  // per-fund weight/identified/undisc
 
   var html =
     // Summary
@@ -797,7 +806,8 @@ function render() {
       totals.splitFundsInfo.slice().sort(function (a, b) { return b.weight - a.weight; })
         .map(function (f) {
           return '<tr>' +
-            '<td>' + esc(f.name) + '</td>' +
+            '<td><span class="fundLink" data-fund-isin="' + esc(f.isin) +
+              '" title="Show the shares in this fund">' + esc(f.name) + '</span></td>' +
             '<td class="num">' + f.identified + '</td>' +
             '<td class="num" style="color:var(--undisc)">' + f.undiscPct.toFixed(1) + '%</td>' +
             '<td class="num">' + f.weight.toFixed(2) + '%</td>' +
@@ -808,7 +818,8 @@ function render() {
       '<td></td><td></td>' +
       '<td class="num" style="font-weight:700">' + totals.splitWeight.toFixed(2) + '%</td>' +
     '</tr></tfoot></table></div>' +
-    '<div class="hint" style="margin-top:6px"><strong>Shares identified</strong> = distinct companies seen ' +
+    '<div class="hint" style="margin-top:6px"><strong>Click a fund name</strong> to see the shares inside it. ' +
+      '<strong>Shares identified</strong> = distinct companies seen ' +
       'through that fund. <strong>Unidentified %</strong> = the share of that fund we can\'t yet see through ' +
       '(no pipeline, or cash/bond buckets). <strong>% of all holdings</strong> = the fund\'s weight in the ' +
       'whole portfolio.</div>' +
@@ -858,6 +869,7 @@ function render() {
         rows.length + '</button>' +
       '<button class="pill accent' + (state.view === "overlap" ? " active" : "") + '" data-view="overlap">Overlaps only ' +
         totals.nOverlap + '</button>' +
+      '<button class="pill" id="exportMain" style="float:right" title="Download this table as CSV">⬇ Export CSV</button>' +
     '</div>' +
     '<div class="tableBox"><table><thead><tr>' +
       sortTh("Company", "name", false) +
@@ -906,6 +918,13 @@ function wireEvents() {
       openFundsPopup((state.shownRows || [])[idx]);
     });
   });
+  document.querySelectorAll(".fundLink").forEach(function (c) {
+    c.addEventListener("click", function () {
+      openFundHoldingsPopup(c.getAttribute("data-fund-isin"));
+    });
+  });
+  var em = document.getElementById("exportMain");
+  if (em) em.addEventListener("click", exportMainCSV);
 }
 
 // --- Drill-down popup: which funds hold this company ---
@@ -929,6 +948,83 @@ function openFundsPopup(r) {
 }
 function closeFundsPopup() {
   document.getElementById("popOverlay").style.display = "none";
+}
+
+// --- Drill-down popup: which shares are inside a given fund ---
+// Lists every company the app has identified inside this top-level fund, with
+// each one's % of the WHOLE portfolio (i.e. its contribution via this fund).
+// Footer reconciles: identified + unidentified = the fund's full portfolio %.
+function sharesInFund(fundIsin) {
+  return (state.allRows || []).map(function (r) {
+    var src = (r.sources || []).find(function (s) { return s.isin === fundIsin; });
+    return src ? { name: r.name, isin: r.isin, weight: src.weight } : null;
+  }).filter(Boolean).sort(function (a, b) { return b.weight - a.weight; });
+}
+function openFundHoldingsPopup(fundIsin) {
+  var info = (state.splitInfo || []).find(function (f) { return f.isin === fundIsin; });
+  if (!info) return;
+  state.openFundIsin = fundIsin;
+  var shares = sharesInFund(fundIsin);
+  var idWeight = shares.reduce(function (s, x) { return s + x.weight; }, 0);
+  var undiscWeight = info.weight - idWeight;
+  var rows = shares.map(function (s) {
+    return '<tr><td>' + esc(s.name) + '</td>' +
+      '<td class="isin">' + esc(s.isin) + '</td>' +
+      '<td class="num mono">' + pct(s.weight) + '</td></tr>';
+  }).join("");
+  document.getElementById("popBody").innerHTML =
+    '<h3>' + esc(info.name) + '</h3>' +
+    '<div class="popSub">' + shares.length + ' share' + (shares.length === 1 ? "" : "s") +
+      ' identified · this fund is ' + info.weight.toFixed(2) + '% of the portfolio</div>' +
+    '<button class="pill" onclick="exportFundCSV()" style="margin-bottom:12px" ' +
+      'title="Download these shares as CSV">⬇ Export CSV</button>' +
+    '<table class="popTable"><thead><tr><th>Share</th><th>ISIN</th>' +
+      '<th class="num">% of portfolio</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>' +
+    '<div class="popFoot">Identified: <strong>' + idWeight.toFixed(2) + '%</strong>' +
+      ' + not yet seen inside: <strong>' + undiscWeight.toFixed(2) + '%</strong>' +
+      ' = the fund\'s full <strong>' + info.weight.toFixed(2) + '%</strong> of the portfolio.</div>';
+  document.getElementById("popOverlay").style.display = "flex";
+}
+
+// --- CSV export (percentages only — never values, per the privacy rule) ---
+function toCSV(headers, rows) {
+  function cell(v) {
+    v = String(v);
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  return [headers].concat(rows).map(function (r) {
+    return r.map(cell).join(",");
+  }).join("\r\n");
+}
+function downloadCSV(filename, csv) {
+  var blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+function safeName(s) {
+  return String(s).replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "export";
+}
+function exportMainCSV() {
+  var rows = (state.allRows || []).map(function (r) {
+    return [r.name, r.isin, r.direct.toFixed(3), r.viaFund.toFixed(3),
+            r.total.toFixed(3), r.nFunds];
+  });
+  var csv = toCSV(["Company", "ISIN", "Direct %", "Via fund %", "Total %", "In funds"], rows);
+  downloadCSV("exposure_by_company.csv", csv);
+}
+function exportFundCSV() {
+  var fundIsin = state.openFundIsin;
+  var info = (state.splitInfo || []).find(function (f) { return f.isin === fundIsin; });
+  if (!info) return;
+  var rows = sharesInFund(fundIsin).map(function (s) {
+    return [s.name, s.isin, s.weight.toFixed(3)];
+  });
+  var csv = toCSV(["Share", "ISIN", "% of portfolio"], rows);
+  downloadCSV("shares_in_" + safeName(info.name) + ".csv", csv);
 }
 
 // --- Load every split fund's holdings live from the backend, then render ---
